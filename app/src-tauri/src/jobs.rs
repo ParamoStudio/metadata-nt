@@ -1,13 +1,19 @@
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::mat2_runner::{expected_cleaned_path, CleanOptions, Mat2Runtime};
-use crate::model::MetadataEntry;
-use crate::output;
+use crate::log_sanitize::sanitize;
+use crate::mat2_runner::{expected_cleaned_path, CleanOptions, Mat2Output, Mat2Runtime, UnknownMembers};
+use crate::model::{
+    diff_metadata, summarize, DiffSummary, FileStatus, MetadataDiff, MetadataEntry,
+};
+use crate::output::{self, OutputMode};
 
 #[derive(Debug)]
 pub enum PipelineError {
@@ -17,6 +23,7 @@ pub enum PipelineError {
     OutputInvalid(String),
     Commit(String),
     Io(String),
+    Cancelled,
 }
 
 impl std::fmt::Display for PipelineError {
@@ -28,6 +35,7 @@ impl std::fmt::Display for PipelineError {
             PipelineError::OutputInvalid(m) => write!(f, "output invalid: {m}"),
             PipelineError::Commit(m) => write!(f, "commit failed: {m}"),
             PipelineError::Io(m) => write!(f, "I/O error: {m}"),
+            PipelineError::Cancelled => write!(f, "cancelled"),
         }
     }
 }
@@ -119,17 +127,24 @@ pub struct CleanOutcome {
     pub mimetype: Option<String>,
     pub pre_metadata: Vec<MetadataEntry>,
     pub post_metadata: Vec<MetadataEntry>,
+    pub clean_output: Mat2Output,
 }
 
 fn first_line(s: &str) -> String {
     s.lines().next().unwrap_or("").trim().to_string()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PipelinePhase {
+    Inspecting,
+    Processing,
+    Verifying,
+}
+
 /// Normal-mode pipeline for ONE file (INTERFACE.md §14):
 /// pre-inspect → stage byte-identical copy → MAT2 clean (never --inplace) →
 /// validate output exists/regular/non-empty → post-inspect → plan collision-free
 /// final path → exclusive commit. Any failure leaves no final output.
-#[allow(clippy::too_many_arguments)]
 pub fn clean_one(
     rt: &Mat2Runtime,
     ws: &JobWorkspace,
@@ -138,12 +153,33 @@ pub fn clean_one(
     canonical_output_root: &Path,
     relative_dir: Option<&Path>,
 ) -> Result<CleanOutcome, PipelineError> {
+    clean_one_tracked(rt, ws, source, opts, canonical_output_root, relative_dir, &AtomicBool::new(false), &|_| Ok(()))
+}
+
+pub fn clean_one_tracked(
+    rt: &Mat2Runtime,
+    ws: &JobWorkspace,
+    source: &Path,
+    opts: &CleanOptions,
+    canonical_output_root: &Path,
+    relative_dir: Option<&Path>,
+    cancel: &AtomicBool,
+    on_phase: &dyn Fn(PipelinePhase) -> Result<(), PipelineError>,
+) -> Result<CleanOutcome, PipelineError> {
+    let check_cancel = |phase: PipelinePhase| -> Result<(), PipelineError> {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(PipelineError::Cancelled);
+        }
+        on_phase(phase)
+    };
+
     if opts.inplace {
         return Err(PipelineError::Io(
             "normal pipeline refuses --inplace; destructive mode has its own path".into(),
         ));
     }
 
+    check_cancel(PipelinePhase::Inspecting)?;
     let src_md = fs::metadata(source).map_err(|_| {
         PipelineError::Io(format!(
             "source missing or unreadable: {:?}",
@@ -164,6 +200,7 @@ pub fn clean_one(
         ));
     }
 
+    check_cancel(PipelinePhase::Processing)?;
     let stage = ws.stage_dir().map_err(PipelineError::Io)?;
     let file_name = source
         .file_name()
@@ -171,9 +208,7 @@ pub fn clean_one(
     let staged = stage.join(file_name);
     fs::copy(source, &staged).map_err(|e| PipelineError::Io(format!("staging copy failed: {e}")))?;
 
-    let cleaned = rt
-        .clean(&staged, opts)
-        .map_err(PipelineError::Io)?;
+    let cleaned = rt.clean(&staged, opts).map_err(PipelineError::Io)?;
     if !cleaned.success {
         let detail = first_line(&cleaned.stdout);
         return Err(PipelineError::Mat2Failure(if detail.is_empty() {
@@ -183,6 +218,7 @@ pub fn clean_one(
         }));
     }
 
+    check_cancel(PipelinePhase::Verifying)?;
     let produced = expected_cleaned_path(&staged);
     let md = fs::symlink_metadata(&produced).map_err(|_| {
         PipelineError::OutputMissing(format!("MAT2 produced no {:?}", produced.file_name()))
@@ -205,6 +241,9 @@ pub fn clean_one(
         ));
     }
 
+    if cancel.load(Ordering::SeqCst) {
+        return Err(PipelineError::Cancelled);
+    }
     let cleaned_name = produced
         .file_name()
         .ok_or_else(|| PipelineError::OutputInvalid("produced output has no file name".into()))?
@@ -220,14 +259,295 @@ pub fn clean_one(
         mimetype: pre.mimetype.clone(),
         pre_metadata: pre.entries.clone(),
         post_metadata: post.entries.clone(),
+        clean_output: cleaned,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Job state machine (Task 10) — Tauri-independent; the command layer in
+// lib.rs implements JobEvents over app.emit + the selection registry.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub struct JobItem {
+    pub id: String,
+    pub path: PathBuf,
+    pub display_name: String,
+    pub relative_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FileJobResult {
+    pub id: String,
+    pub display_name: String,
+    pub status: FileStatus,
+    pub detail: String,
+    pub diffs: Vec<MetadataDiff>,
+    pub summary: Option<DiffSummary>,
+}
+
+pub trait JobEvents: Send + Sync {
+    fn status(&self, id: &str, status: FileStatus);
+    fn log(&self, line: &str);
+    fn file_result(&self, result: &FileJobResult, final_path: Option<&Path>);
+}
+
+#[derive(Clone, Debug)]
+pub struct JobSettings {
+    pub lightweight: bool,
+    pub verbose: bool,
+    pub unknown_members: UnknownMembers,
+    /// Some(canonical root) = Custom folder mode; None = Beside source.
+    pub custom_output_root: Option<PathBuf>,
+}
+
+impl Default for JobSettings {
+    fn default() -> Self {
+        Self {
+            lightweight: false,
+            verbose: false,
+            unknown_members: UnknownMembers::Abort,
+            custom_output_root: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct JobReport {
+    pub results: Vec<FileJobResult>,
+    pub cancelled: bool,
+}
+
+fn log_line(events: &dyn JobEvents, message: &str) {
+    let stamp = {
+        let fmt = time::macros::format_description!("[hour]:[minute]:[second]");
+        time::OffsetDateTime::now_local()
+            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+            .format(&fmt)
+            .unwrap_or_else(|_| "--:--:--".to_string())
+    };
+    events.log(&format!("[{stamp}] {}", sanitize(message)));
+}
+
+fn batch_root_of(path: &Path, relative: &Path) -> Option<PathBuf> {
+    let depth = relative.components().count();
+    path.ancestors().nth(depth).map(PathBuf::from)
+}
+
+fn relative_dir_of(relative: &Path) -> Option<PathBuf> {
+    let parent = relative.parent()?;
+    if parent == Path::new("") || parent == Path::new(".") {
+        None
+    } else {
+        Some(parent.to_path_buf())
+    }
+}
+
+/// Sequential batch execution (v1: no parallelism). Green Processed requires
+/// the full verified pipeline; anything else is Warning/Failed/Unsupported/
+/// Cancelled — never a false success.
+pub fn run_job(
+    rt: &Mat2Runtime,
+    items: Vec<JobItem>,
+    settings: &JobSettings,
+    events: &dyn JobEvents,
+    cancel: &AtomicBool,
+) -> JobReport {
+    let ws = match JobWorkspace::create() {
+        Ok(ws) => ws,
+        Err(e) => {
+            let results: Vec<FileJobResult> = items
+                .iter()
+                .map(|it| FileJobResult {
+                    id: it.id.clone(),
+                    display_name: it.display_name.clone(),
+                    status: FileStatus::Failed,
+                    detail: sanitize(&e),
+                    diffs: Vec::new(),
+                    summary: None,
+                })
+                .collect();
+            for r in &results {
+                events.status(&r.id, FileStatus::Failed);
+            }
+            return JobReport { results, cancelled: false };
+        }
+    };
+
+    let timestamp = output::timestamp_now();
+    let opts = CleanOptions {
+        lightweight: settings.lightweight,
+        verbose: settings.verbose,
+        unknown_members: settings.unknown_members,
+        inplace: false,
+    };
+    let mode = match &settings.custom_output_root {
+        Some(root) => OutputMode::Custom(root.clone()),
+        None => OutputMode::BesideSource,
+    };
+
+    let mut results = Vec::new();
+    let mut roots: HashMap<PathBuf, Result<PathBuf, String>> = HashMap::new();
+
+    for item in &items {
+        events.status(&item.id, FileStatus::Queued);
+    }
+
+    for item in &items {
+        if cancel.load(Ordering::SeqCst) {
+            let r = FileJobResult {
+                id: item.id.clone(),
+                display_name: item.display_name.clone(),
+                status: FileStatus::Cancelled,
+                detail: "Cancelled before processing".into(),
+                diffs: Vec::new(),
+                summary: None,
+            };
+            events.status(&item.id, FileStatus::Cancelled);
+            events.file_result(&r, None);
+            results.push(r);
+            continue;
+        }
+
+        log_line(events, &format!("Queued {}", item.display_name));
+
+        let root_base = match (&item.relative_path, &mode) {
+            (_, OutputMode::Custom(root)) => root.clone(),
+            (Some(rel), OutputMode::BesideSource) => {
+                batch_root_of(&item.path, rel).unwrap_or_else(|| {
+                    item.path.parent().map(PathBuf::from).unwrap_or_else(|| item.path.clone())
+                })
+            }
+            (None, OutputMode::BesideSource) => item
+                .path
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| item.path.clone()),
+        };
+
+        let canonical_root = match roots.entry(root_base.clone()).or_insert_with(|| {
+            output::job_root(&mode, &root_base, &timestamp)
+                .and_then(|r| output::ensure_root(&r))
+        }) {
+            Ok(r) => r.clone(),
+            Err(e) => {
+                let r = FileJobResult {
+                    id: item.id.clone(),
+                    display_name: item.display_name.clone(),
+                    status: FileStatus::Failed,
+                    detail: sanitize(&format!("cannot prepare output location: {e}")),
+                    diffs: Vec::new(),
+                    summary: None,
+                };
+                log_line(events, &format!("{}: {}", item.display_name, r.detail));
+                events.status(&item.id, FileStatus::Failed);
+                events.file_result(&r, None);
+                results.push(r);
+                continue;
+            }
+        };
+
+        let relative_dir = item
+            .relative_path
+            .as_deref()
+            .and_then(relative_dir_of);
+
+        let id_for_events = item.id.clone();
+        let on_phase = |phase: PipelinePhase| -> Result<(), PipelineError> {
+            let st = match phase {
+                PipelinePhase::Inspecting => FileStatus::Inspecting,
+                PipelinePhase::Processing => FileStatus::Processing,
+                PipelinePhase::Verifying => FileStatus::Verifying,
+            };
+            events.status(&id_for_events, st);
+            match phase {
+                PipelinePhase::Inspecting => log_line(events, &format!("Inspecting source of {} with MAT2", item.display_name)),
+                PipelinePhase::Processing => log_line(events, &format!("Creating private staging copy and running MAT2 on {}", item.display_name)),
+                PipelinePhase::Verifying => log_line(events, &format!("Verifying output of {} with MAT2", item.display_name)),
+            }
+            Ok(())
+        };
+
+        let outcome = clean_one_tracked(rt, &ws, &item.path, &opts, &canonical_root, relative_dir.as_deref(), cancel, &on_phase);
+
+        let result = match outcome {
+            Ok(o) => {
+                if settings.verbose {
+                    for line in o.clean_output.stderr.lines().chain(o.clean_output.stdout.lines()) {
+                        if !line.trim().is_empty() {
+                            log_line(events, &format!("mat2: {line}"));
+                        }
+                    }
+                }
+                let diffs = diff_metadata(&o.pre_metadata, &o.post_metadata);
+                let summary = summarize(&diffs, o.pre_metadata.len());
+                log_line(events, &format!("MAT2 output created for {}", item.display_name));
+                log_line(events, &format!("Committed output for {}", item.display_name));
+                let (status, detail) = if o.post_metadata.is_empty() {
+                    log_line(events, &format!("Result: 0 metadata fields detectable by MAT2 in {}", item.display_name));
+                    (FileStatus::Processed, "No metadata detectable by MAT2".to_string())
+                } else {
+                    let n = o.post_metadata.len();
+                    log_line(events, &format!("Result: {n} metadata fields still detectable by MAT2 in {}", item.display_name));
+                    (FileStatus::Warning, format!("MAT2 still detects {n} metadata fields"))
+                };
+                let r = FileJobResult {
+                    id: item.id.clone(),
+                    display_name: item.display_name.clone(),
+                    status,
+                    detail,
+                    diffs,
+                    summary: Some(summary),
+                };
+                events.status(&item.id, status);
+                events.file_result(&r, Some(&o.final_path));
+                results.push(r);
+                continue;
+            }
+            Err(PipelineError::Cancelled) => FileJobResult {
+                id: item.id.clone(),
+                display_name: item.display_name.clone(),
+                status: FileStatus::Cancelled,
+                detail: "Cancelled during processing".into(),
+                diffs: Vec::new(),
+                summary: None,
+            },
+            Err(PipelineError::Unsupported(m)) => FileJobResult {
+                id: item.id.clone(),
+                display_name: item.display_name.clone(),
+                status: FileStatus::Unsupported,
+                detail: sanitize(&format!("MAT2 does not support this format ({m}); not processed")),
+                diffs: Vec::new(),
+                summary: None,
+            },
+            Err(e) => FileJobResult {
+                id: item.id.clone(),
+                display_name: item.display_name.clone(),
+                status: FileStatus::Failed,
+                detail: sanitize(&e.to_string()),
+                diffs: Vec::new(),
+                summary: None,
+            },
+        };
+        log_line(events, &format!("{}: {}", result.display_name, result.detail));
+        events.status(&item.id, result.status);
+        events.file_result(&result, None);
+        results.push(result);
+    }
+
+    ws.cleanup();
+    JobReport {
+        cancelled: cancel.load(Ordering::SeqCst),
+        results,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mat2_runner::Mat2Runtime;
-    use crate::output::{job_root, ensure_root, OutputMode};
+    use crate::output::{ensure_root, job_root};
+    use std::sync::Mutex;
 
     fn runtime_or_skip() -> Option<Mat2Runtime> {
         match Mat2Runtime::resolve() {
@@ -255,6 +575,78 @@ mod tests {
 
     fn fixture(name: &str) -> PathBuf {
         project_root().join("upstream-mat2/tests/data").join(name)
+    }
+
+    #[derive(Default)]
+    struct MockEvents {
+        records: Mutex<Vec<Recorded>>,
+        on_result: Mutex<Option<Box<dyn Fn(&FileJobResult) + Send>>>,
+    }
+
+    #[derive(Clone, Debug)]
+    enum Recorded {
+        Status(String, FileStatus),
+        Log(String),
+        Result(FileJobResult),
+    }
+
+    impl MockEvents {
+        fn statuses(&self) -> Vec<(String, FileStatus)> {
+            self.records
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|r| match r {
+                    Recorded::Status(id, s) => Some((id.clone(), *s)),
+                    _ => None,
+                })
+                .collect()
+        }
+        fn results(&self) -> Vec<FileJobResult> {
+            self.records
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|r| match r {
+                    Recorded::Result(res) => Some(res.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+        fn logs(&self) -> Vec<String> {
+            self.records
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|r| match r {
+                    Recorded::Log(l) => Some(l.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+        fn set_on_result(&self, f: impl Fn(&FileJobResult) + Send + 'static) {
+            *self.on_result.lock().unwrap() = Some(Box::new(f));
+        }
+    }
+
+    impl JobEvents for MockEvents {
+        fn status(&self, id: &str, status: FileStatus) {
+            self.records.lock().unwrap().push(Recorded::Status(id.to_string(), status));
+        }
+        fn log(&self, line: &str) {
+            self.records.lock().unwrap().push(Recorded::Log(line.to_string()));
+        }
+        fn file_result(&self, result: &FileJobResult, _final_path: Option<&Path>) {
+            if let Some(f) = self.on_result.lock().unwrap().as_ref() {
+                f(result);
+            }
+            self.records.lock().unwrap().push(Recorded::Result(result.clone()));
+        }
+    }
+
+    fn item(id: &str, path: PathBuf) -> JobItem {
+        let display_name = path.file_name().unwrap().to_string_lossy().into_owned();
+        JobItem { id: id.to_string(), path, display_name, relative_path: None }
     }
 
     #[test]
@@ -399,7 +791,6 @@ mod tests {
 
         let committed = clean_one(&rt, &ws, &a, &CleanOptions::default(), &canonical, None).unwrap();
 
-        // second file: staged, then "cancel" before clean/commit
         let stage = ws.stage_dir().unwrap();
         let staged_b = stage.join("dirty.png");
         fs::copy(&b, &staged_b).unwrap();
@@ -426,6 +817,254 @@ mod tests {
         assert!(matches!(err, Err(PipelineError::Io(_))));
         ws.cleanup();
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---------------- state machine (Task 10) ----------------
+
+    #[test]
+    fn run_job_happy_path_sequential_with_full_status_ladder() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("runjob-happy");
+        let a = dir.join("one.jpg");
+        let b = dir.join("two.png");
+        fs::copy(fixture("dirty.jpg"), &a).unwrap();
+        fs::copy(fixture("dirty.png"), &b).unwrap();
+        let sha_a = sha256_file(&a).unwrap();
+
+        let events = MockEvents::default();
+        let cancel = AtomicBool::new(false);
+        let report = run_job(&rt, vec![item("id-a", a.clone()), item("id-b", b.clone())], &JobSettings::default(), &events, &cancel);
+
+        assert!(!report.cancelled);
+        assert_eq!(report.results.len(), 2);
+        assert!(report.results.iter().all(|r| r.status == FileStatus::Processed), "{:?}", report.results);
+
+        // strict sequential ladder: file A reaches terminal status before B starts inspecting
+        let st = events.statuses();
+        let pos = |id: &str, s: FileStatus| st.iter().position(|(i, x)| i == id && *x == s).expect("missing transition");
+        assert!(pos("id-a", FileStatus::Processed) < pos("id-b", FileStatus::Inspecting));
+        for id in ["id-a", "id-b"] {
+            assert!(pos(id, FileStatus::Queued) < pos(id, FileStatus::Inspecting));
+            assert!(pos(id, FileStatus::Inspecting) < pos(id, FileStatus::Processing));
+            assert!(pos(id, FileStatus::Processing) < pos(id, FileStatus::Verifying));
+            assert!(pos(id, FileStatus::Verifying) < pos(id, FileStatus::Processed));
+        }
+
+        // diff content: jpg comment removed
+        let res_a = report.results.iter().find(|r| r.id == "id-a").unwrap();
+        assert!(res_a.diffs.iter().any(|d| d.key == "Comment" && d.status == crate::model::DiffStatus::Removed));
+        assert_eq!(res_a.summary.unwrap().still_detectable, 0);
+
+        // outputs inside <dir>/MAT2 Output/<ts>/, sources untouched
+        let out_root = dir.join(crate::output::OUTPUT_DIR_NAME);
+        let files = walkdir_flat(&out_root);
+        assert_eq!(files.len(), 2, "{:?}", files);
+        assert_eq!(sha256_file(&a).unwrap(), sha_a);
+
+        // no ANSI/control chars in any log line; logs mention both files
+        for l in events.logs() {
+            assert!(!l.chars().any(|c| (c as u32) < 0x20 && c != '\n' && c != '\t'));
+        }
+        assert!(events.logs().iter().any(|l| l.contains("Committed output for one.jpg")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_mixed_unsupported_reports_per_file_status() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("runjob-mixed");
+        let good = dir.join("ok.jpg");
+        let weird = dir.join("notes.unknownext123");
+        fs::copy(fixture("dirty.jpg"), &good).unwrap();
+        fs::write(&weird, b"hello").unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("g", good.clone()), item("w", weird.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+
+        let g = report.results.iter().find(|r| r.id == "g").unwrap();
+        let w = report.results.iter().find(|r| r.id == "w").unwrap();
+        assert_eq!(g.status, FileStatus::Processed);
+        assert_eq!(w.status, FileStatus::Unsupported);
+        assert!(w.detail.contains("does not support"), "{}", w.detail);
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 1, "{:?}", outputs);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_warns_when_metadata_remains() {
+        let Some(rt) = runtime_or_skip() else { return };
+        if std::process::Command::new("ffmpeg").arg("-version").output().is_err() {
+            eprintln!("SKIP: ffmpeg unavailable for mp4 warning case");
+            return;
+        }
+        let dir = tempdir("runjob-warn");
+        let vid = dir.join("clip.mp4");
+        fs::copy(fixture("dirty.mp4"), &vid).unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("v", vid)], &JobSettings::default(), &events, &AtomicBool::new(false));
+        let v = &report.results[0];
+        assert_eq!(v.status, FileStatus::Warning, "{:?}", v);
+        assert!(v.summary.unwrap().still_detectable > 0);
+        assert!(v.detail.contains("still detects"), "{}", v.detail);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_cancel_before_start_cancels_everything() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("runjob-cancel0");
+        let a = dir.join("a.jpg");
+        fs::copy(fixture("dirty.jpg"), &a).unwrap();
+
+        let events = MockEvents::default();
+        let cancel = AtomicBool::new(true);
+        let report = run_job(&rt, vec![item("a", a.clone())], &JobSettings::default(), &events, &cancel);
+        assert!(report.cancelled);
+        assert_eq!(report.results[0].status, FileStatus::Cancelled);
+        assert!(!dir.join(crate::output::OUTPUT_DIR_NAME).join("").exists()
+            || walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_cancel_during_keeps_committed_and_cancels_rest() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("runjob-cancel1");
+        let a = dir.join("a.jpg");
+        let b = dir.join("b.png");
+        fs::copy(fixture("dirty.jpg"), &a).unwrap();
+        fs::copy(fixture("dirty.png"), &b).unwrap();
+
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let events = MockEvents::default();
+        let cancel_for_cb = cancel.clone();
+        events.set_on_result(move |r| {
+            if r.id == "a" {
+                cancel_for_cb.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let report = run_job(&rt, vec![item("a", a), item("b", b)], &JobSettings::default(), &events, &cancel);
+        assert!(report.cancelled);
+        let ra = report.results.iter().find(|r| r.id == "a").unwrap();
+        let rb = report.results.iter().find(|r| r.id == "b").unwrap();
+        assert_eq!(ra.status, FileStatus::Processed);
+        assert_eq!(rb.status, FileStatus::Cancelled);
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 1, "committed output survives: {:?}", outputs);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_deleted_after_selection_fails_visibly() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("runjob-deleted");
+        let a = dir.join("gone.jpg");
+        fs::copy(fixture("dirty.jpg"), &a).unwrap();
+        let items = vec![item("a", a.clone())];
+        fs::remove_file(&a).unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false));
+        assert_eq!(report.results[0].status, FileStatus::Failed);
+        assert!(report.results[0].detail.to_lowercase().contains("missing")
+            || report.results[0].detail.to_lowercase().contains("unreadable"), "{}", report.results[0].detail);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_permission_error_fails_visibly() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("runjob-perm");
+        let a = dir.join("locked.jpg");
+        fs::copy(fixture("dirty.jpg"), &a).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&a).unwrap().permissions();
+        perms.set_mode(0o000);
+        fs::set_permissions(&a, perms).unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("a", a.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+        assert_eq!(report.results[0].status, FileStatus::Failed, "{:?}", report.results[0]);
+
+        let mut perms = fs::metadata(&a).unwrap().permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(&a, perms).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_corrupt_file_never_reports_success() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("runjob-corrupt");
+        let a = dir.join("corrupt.jpg");
+        fs::write(&a, b"definitely not a jpeg").unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("a", a)], &JobSettings::default(), &events, &AtomicBool::new(false));
+        let r = &report.results[0];
+        assert_eq!(r.status, FileStatus::Failed);
+        assert_ne!(r.status, FileStatus::Processed);
+        assert!(walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_custom_root_collects_outputs() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let src_dir = tempdir("runjob-custom-src");
+        let out_dir = tempdir("runjob-custom-out");
+        let a = src_dir.join("a.jpg");
+        fs::copy(fixture("dirty.jpg"), &a).unwrap();
+
+        let settings = JobSettings { custom_output_root: Some(out_dir.clone()), ..Default::default() };
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("a", a)], &settings, &events, &AtomicBool::new(false));
+        assert_eq!(report.results[0].status, FileStatus::Processed);
+        assert!(!src_dir.join(crate::output::OUTPUT_DIR_NAME).exists(), "nothing beside source in custom mode");
+        let outputs = walkdir_flat(&out_dir);
+        assert_eq!(outputs.len(), 1, "{:?}", outputs);
+        assert!(outputs[0].starts_with(&out_dir));
+        fs::remove_dir_all(&src_dir).unwrap();
+        fs::remove_dir_all(&out_dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_folder_batch_preserves_relative_structure() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let batch = tempdir("runjob-batch");
+        fs::create_dir_all(batch.join("photos/2026")).unwrap();
+        let top = batch.join("top.jpg");
+        let nested = batch.join("photos/2026/deep.png");
+        fs::copy(fixture("dirty.jpg"), &top).unwrap();
+        fs::copy(fixture("dirty.png"), &nested).unwrap();
+
+        let items = vec![
+            JobItem {
+                id: "t".into(),
+                path: top.clone(),
+                display_name: "top.jpg".into(),
+                relative_path: Some(PathBuf::from("top.jpg")),
+            },
+            JobItem {
+                id: "n".into(),
+                path: nested.clone(),
+                display_name: "deep.png".into(),
+                relative_path: Some(PathBuf::from("photos/2026/deep.png")),
+            },
+        ];
+        let events = MockEvents::default();
+        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false));
+        assert!(report.results.iter().all(|r| r.status == FileStatus::Processed), "{:?}", report.results);
+
+        let out_root = batch.join(crate::output::OUTPUT_DIR_NAME);
+        let outputs = walkdir_flat(&out_root);
+        assert_eq!(outputs.len(), 2, "{:?}", outputs);
+        assert!(outputs.iter().any(|p| p.ends_with("photos/2026/deep.cleaned.png")), "{:?}", outputs);
+        assert!(outputs.iter().any(|p| p.file_name().unwrap() == "top.cleaned.jpg"), "{:?}", outputs);
+        fs::remove_dir_all(&batch).unwrap();
     }
 
     fn walkdir_flat(root: &Path) -> Vec<PathBuf> {

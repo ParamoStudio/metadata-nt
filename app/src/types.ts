@@ -48,3 +48,39 @@ export interface DiffSummary {
   changed: number;
   still_detectable: number;
 }
+
+/** Terminal per-file job result emitted as `job-file-result`. */
+export interface FileJobResult {
+  id: string;
+  display_name: string;
+  status: FileStatus;
+  detail: string;
+  diffs: MetadataDiff[];
+  summary: DiffSummary | null;
+}
+
+/** Payload of `start_clean_job` (camelCase per serde rename_all). */
+export interface JobSettingsDto {
+  lightweight: boolean;
+  verbose: boolean;
+  unknownMembers: "abort" | "omit" | "keep";
+  output: "beside" | "custom";
+}
+
+export interface JobStatusEvent {
+  id: string;
+  status: FileStatus;
+}
+
+export interface JobLogEvent {
+  line: string;
+}
+
+export interface JobFinishedEvent {
+  jobId: string;
+  cancelled: boolean;
+}
+
+export interface OutputRootChangedEvent {
+  displayName: string;
+}

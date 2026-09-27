@@ -14,16 +14,30 @@ mod output;
 mod selection;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
-use model::PublicSelectedFile;
+use jobs::{FileJobResult, JobItem, JobSettings};
+use mat2_runner::{Mat2Runtime, UnknownMembers};
+use model::{FileStatus, PublicSelectedFile};
+use serde::Deserialize;
 use selection::Registry;
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 use tauri_plugin_dialog::DialogExt;
 
+struct ActiveJob {
+    job_id: String,
+    cancel: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+    outputs: Arc<Mutex<Vec<PathBuf>>>,
+}
+
 #[derive(Default)]
 struct AppState {
     registry: Registry,
+    job: Mutex<Option<ActiveJob>>,
+    custom_output_root: Mutex<Option<PathBuf>>,
 }
 
 fn register_paths(app: &AppHandle, paths: Vec<PathBuf>) {
@@ -106,6 +120,187 @@ fn select_folder(app: AppHandle, window: Window) {
         });
 }
 
+#[tauri::command]
+fn choose_output_root(app: AppHandle, window: Window) {
+    let handle = app.clone();
+    app.dialog()
+        .file()
+        .set_parent(&window)
+        .pick_folder(move |picked| {
+            if let Some(item) = picked {
+                if let Ok(path) = item.into_path() {
+                    if let Ok(canonical) = fs::canonicalize(&path) {
+                        *handle.state::<AppState>().custom_output_root.lock().expect("poisoned") =
+                            Some(canonical.clone());
+                        let display = canonical
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
+                        let _ = handle.emit("output-root-changed", serde_json::json!({ "displayName": display }));
+                    }
+                }
+            }
+        });
+}
+
+#[tauri::command]
+fn output_root_info(state: State<'_, AppState>) -> Option<String> {
+    state
+        .custom_output_root
+        .lock()
+        .expect("poisoned")
+        .as_ref()
+        .map(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.to_string_lossy().into_owned())
+        })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JobSettingsDto {
+    lightweight: bool,
+    verbose: bool,
+    unknown_members: String,
+    output: String,
+}
+
+struct TauriJobEvents {
+    app: AppHandle,
+    outputs: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl jobs::JobEvents for TauriJobEvents {
+    fn status(&self, id: &str, status: FileStatus) {
+        self.app.state::<AppState>().registry.set_status(id, status);
+        let _ = self.app.emit(
+            "job-status",
+            serde_json::json!({ "id": id, "status": status }),
+        );
+    }
+
+    fn log(&self, line: &str) {
+        let _ = self
+            .app
+            .emit("job-log", serde_json::json!({ "line": log_sanitize::sanitize(line) }));
+    }
+
+    fn file_result(&self, result: &FileJobResult, final_path: Option<&Path>) {
+        if let Some(p) = final_path {
+            self.outputs.lock().expect("poisoned").push(p.to_path_buf());
+        }
+        let _ = self.app.emit("job-file-result", result);
+    }
+}
+
+#[tauri::command]
+fn start_clean_job(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    settings: JobSettingsDto,
+) -> Result<String, String> {
+    {
+        let slot = state.job.lock().expect("poisoned");
+        if let Some(active) = slot.as_ref() {
+            if !active.done.load(Ordering::SeqCst) {
+                return Err("a job is already running".into());
+            }
+        }
+    }
+    if ids.is_empty() {
+        return Err("no files selected".into());
+    }
+
+    let mut items: Vec<JobItem> = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let snap = state
+            .registry
+            .snapshot(id)
+            .ok_or_else(|| format!("unknown selection id: {id}"))?;
+        items.push(JobItem {
+            id: id.clone(),
+            path: snap.path,
+            display_name: snap.display_name,
+            relative_path: snap.relative_path,
+        });
+    }
+
+    let unknown_members = match settings.unknown_members.as_str() {
+        "abort" => UnknownMembers::Abort,
+        "omit" => UnknownMembers::Omit,
+        "keep" => UnknownMembers::Keep,
+        other => return Err(format!("invalid unknown-members policy: {other}")),
+    };
+    let custom_output_root = match settings.output.as_str() {
+        "beside" => None,
+        "custom" => Some(
+            state
+                .custom_output_root
+                .lock()
+                .expect("poisoned")
+                .clone()
+                .ok_or_else(|| "custom output folder not chosen yet".to_string())?,
+        ),
+        other => return Err(format!("invalid output mode: {other}")),
+    };
+
+    let rt = Mat2Runtime::resolve()?;
+    for item in &items {
+        state.registry.set_status(&item.id, FileStatus::Queued);
+    }
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
+    let outputs = Arc::new(Mutex::new(Vec::new()));
+    *state.job.lock().expect("poisoned") = Some(ActiveJob {
+        job_id: job_id.clone(),
+        cancel: cancel.clone(),
+        done: done.clone(),
+        outputs: outputs.clone(),
+    });
+
+    let job_settings = JobSettings {
+        lightweight: settings.lightweight,
+        verbose: settings.verbose,
+        unknown_members,
+        custom_output_root,
+    };
+    let events = Arc::new(TauriJobEvents {
+        app: app.clone(),
+        outputs,
+    });
+    let job_id_for_thread = job_id.clone();
+
+    std::thread::spawn(move || {
+        let report = jobs::run_job(&rt, items, &job_settings, events.as_ref(), &cancel);
+        for r in &report.results {
+            app.state::<AppState>().registry.set_status(&r.id, r.status);
+        }
+        done.store(true, Ordering::SeqCst);
+        let _ = app.emit(
+            "job-finished",
+            serde_json::json!({ "jobId": job_id_for_thread, "cancelled": report.cancelled }),
+        );
+    });
+
+    Ok(job_id)
+}
+
+#[tauri::command]
+fn cancel_job(state: State<'_, AppState>) -> bool {
+    let slot = state.job.lock().expect("poisoned");
+    if let Some(active) = slot.as_ref() {
+        if !active.done.load(Ordering::SeqCst) {
+            active.cancel.store(true, Ordering::SeqCst);
+            return true;
+        }
+    }
+    false
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -114,7 +309,11 @@ pub fn run() {
             list_selection,
             remove_items,
             select_files,
-            select_folder
+            select_folder,
+            choose_output_root,
+            output_root_info,
+            start_clean_job,
+            cancel_job
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -40,6 +40,13 @@ pub struct AddOutcome {
     pub skipped: Vec<(String, String)>,
 }
 
+#[derive(Clone, Debug)]
+pub struct SelectionSnapshot {
+    pub path: PathBuf,
+    pub display_name: String,
+    pub relative_path: Option<PathBuf>,
+}
+
 /// Enumerate regular files under `root` deterministically (sorted).
 ///
 /// SECURITY INVARIANT: never follows symlinks — a symlinked entry (file or
@@ -148,6 +155,14 @@ impl Registry {
             .by_id
             .get(id)
             .map(|e| e.path.clone())
+    }
+
+    pub fn snapshot(&self, id: &str) -> Option<SelectionSnapshot> {
+        self.inner.lock().expect("registry poisoned").by_id.get(id).map(|e| SelectionSnapshot {
+            path: e.path.clone(),
+            display_name: e.display_name.clone(),
+            relative_path: e.relative_path.clone(),
+        })
     }
 
     pub fn is_symlink(&self, id: &str) -> Option<bool> {
