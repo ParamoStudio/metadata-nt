@@ -1,15 +1,11 @@
 /**
- * Frontend state container (Task 2: placeholder).
+ * Frontend state container + IPC access.
  *
- * Later tasks own this module:
- * - Task 4:  selection list keyed by opaque IDs from the Rust registry
- * - Task 10: per-file job state mirroring backend events
- * - Task 12: view binding
- *
- * Rule: this module holds application state only — never document content,
- * never absolute source paths (the backend does not send them).
+ * Holds only data the backend chose to expose (opaque IDs + display fields).
+ * Absolute source paths never cross the IPC boundary and are never stored here.
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import type { PublicSelectedFile } from "./types";
 
 export interface AppState {
@@ -18,4 +14,21 @@ export interface AppState {
 
 export function initialState(): AppState {
   return { files: [] };
+}
+
+export async function refreshSelection(state: AppState): Promise<void> {
+  state.files = await invoke<PublicSelectedFile[]>("list_selection");
+}
+
+export async function requestSelectFiles(): Promise<void> {
+  await invoke("select_files");
+}
+
+export async function requestSelectFolder(): Promise<void> {
+  await invoke("select_folder");
+}
+
+export async function requestRemove(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await invoke("remove_items", { ids });
 }

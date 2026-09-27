@@ -30,10 +30,20 @@ Nothing else is granted. In particular:
   Task 2: logs are in-memory only (HANDOFF §18); no persistent log files that
   could retain sensitive filenames.
 
+### Rust-side dependencies without frontend permissions (Task 4)
+
+| Dependency | Rationale | Frontend permission granted |
+|---|---|---|
+| `tauri-plugin-dialog` | Native file/folder pickers, invoked **only from Rust** (`DialogExt`) inside `select_files`/`select_folder` commands; dialog results are registered directly in the Rust registry so absolute paths never round-trip through the WebView. Drag-and-drop arrives via Rust `WindowEvent::DragDrop`, likewise. | **None** — no `dialog:*` permission in any capability; the WebView cannot open dialogs or fabricate picker results itself |
+| `uuid` (v4) | Opaque, unguessable selection IDs; keeps the frontend unable to enumerate or construct registry keys | None |
+
+Registry policy (selection.rs, covered by unit tests): frontend-supplied data is
+only ever opaque IDs; unknown IDs resolve to nothing; duplicates dedupe by
+canonical path; folder enumeration never follows symlinks; symlinked files are
+classified explicitly; broken symlinks are skipped with a reason.
+
 Planned additions (each lands with its rationale line here in the same commit):
 
-- `dialog:allow-open` (Task 4) — native multi-file/folder pickers only; the
-  dialog plugin cannot read/write file contents, it returns user-approved paths.
 - `opener:allow-open-url` scoped to the three exact URLs, OR (preferred) plain
   Rust-side opening with no frontend permission at all (Task 14 decides; default
   is Rust-side so no capability is added).
