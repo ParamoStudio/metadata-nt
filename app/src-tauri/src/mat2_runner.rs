@@ -235,8 +235,108 @@ impl Mat2Runtime {
     /// Normal (or lightweight/inplace) cleaning of a single file.
     /// Exit 0 = success; 255 (-1) = upstream signalled failure.
     pub fn clean(&self, file: &Path, opts: &CleanOptions) -> Result<Mat2Output, String> {
-        self.run(clean_argv(file, opts))
+        match self.clean_cancellable(file, opts, &std::sync::atomic::AtomicBool::new(false))? {
+            CleanRunOutcome::Completed(out) => Ok(out),
+            CleanRunOutcome::Cancelled => Err("clean cancelled".to_string()),
+        }
     }
+
+    /// Cleaning with cooperative cancellation. The child runs in its own
+    /// process group; on cancel the whole group gets SIGTERM, a grace period,
+    /// then SIGKILL — MAT2's internal ProcessPoolExecutor workers cannot be
+    /// orphaned. stdout/stderr are captured via temp files (no pipe deadlock
+    /// while polling).
+    pub fn clean_cancellable(
+        &self,
+        file: &Path,
+        opts: &CleanOptions,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<CleanRunOutcome, String> {
+        use std::process::Stdio;
+
+        let out_path = std::env::temp_dir().join(format!("mat2-out-{}", uuid::Uuid::new_v4()));
+        let err_path = std::env::temp_dir().join(format!("mat2-err-{}", uuid::Uuid::new_v4()));
+        let out_file = std::fs::File::create(&out_path)
+            .map_err(|e| format!("cannot create stdout capture: {e}"))?;
+        let err_file = std::fs::File::create(&err_path)
+            .map_err(|e| format!("cannot create stderr capture: {e}"))?;
+
+        let mut cmd = self.base_command();
+        cmd.args(clean_argv(file, opts))
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(out_file))
+            .stderr(Stdio::from(err_file));
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("failed to spawn MAT2 runtime: {e}"))?;
+
+        let status = loop {
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                terminate_group(&mut child);
+                let _ = std::fs::remove_file(&out_path);
+                let _ = std::fs::remove_file(&err_path);
+                return Ok(CleanRunOutcome::Cancelled);
+            }
+            let wait = child.try_wait();
+            match wait {
+                Ok(Some(status)) => break status,
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(40)),
+                Err(e) => {
+                    terminate_group(&mut child);
+                    let _ = std::fs::remove_file(&out_path);
+                    let _ = std::fs::remove_file(&err_path);
+                    return Err(format!("wait failed: {e}"));
+                }
+            }
+        };
+
+        let stdout = std::fs::read_to_string(&out_path).unwrap_or_default();
+        let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&out_path);
+        let _ = std::fs::remove_file(&err_path);
+
+        Ok(CleanRunOutcome::Completed(Mat2Output {
+            exit_code: status.code(),
+            success: status.success(),
+            stdout,
+            stderr,
+        }))
+    }
+}
+
+pub enum CleanRunOutcome {
+    Completed(Mat2Output),
+    Cancelled,
+}
+
+#[cfg(unix)]
+fn terminate_group(child: &mut std::process::Child) {
+    let pid = child.id() as libc::pid_t;
+    unsafe {
+        libc::kill(-pid, libc::SIGTERM);
+    }
+    for _ in 0..10 {
+        if let Ok(Some(_)) = child.try_wait() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+    let _ = child.wait();
+}
+
+#[cfg(not(unix))]
+fn terminate_group(child: &mut std::process::Child) {
+    let _ = child.start_kill();
+    let _ = child.wait();
 }
 
 #[cfg(test)]

@@ -208,7 +208,10 @@ pub fn clean_one_tracked(
     let staged = stage.join(file_name);
     fs::copy(source, &staged).map_err(|e| PipelineError::Io(format!("staging copy failed: {e}")))?;
 
-    let cleaned = rt.clean(&staged, opts).map_err(PipelineError::Io)?;
+    let cleaned = match rt.clean_cancellable(&staged, opts, cancel).map_err(PipelineError::Io)? {
+        crate::mat2_runner::CleanRunOutcome::Completed(out) => out,
+        crate::mat2_runner::CleanRunOutcome::Cancelled => return Err(PipelineError::Cancelled),
+    };
     if !cleaned.success {
         let detail = first_line(&cleaned.stdout);
         return Err(PipelineError::Mat2Failure(if detail.is_empty() {
@@ -581,6 +584,7 @@ mod tests {
     struct MockEvents {
         records: Mutex<Vec<Recorded>>,
         on_result: Mutex<Option<Box<dyn Fn(&FileJobResult) + Send>>>,
+        on_status: Mutex<Option<Box<dyn Fn(&str, FileStatus) + Send>>>,
     }
 
     #[derive(Clone, Debug)]
@@ -627,10 +631,16 @@ mod tests {
         fn set_on_result(&self, f: impl Fn(&FileJobResult) + Send + 'static) {
             *self.on_result.lock().unwrap() = Some(Box::new(f));
         }
+        fn set_on_status(&self, f: impl Fn(&str, FileStatus) + Send + 'static) {
+            *self.on_status.lock().unwrap() = Some(Box::new(f));
+        }
     }
 
     impl JobEvents for MockEvents {
         fn status(&self, id: &str, status: FileStatus) {
+            if let Some(f) = self.on_status.lock().unwrap().as_ref() {
+                f(id, status);
+            }
             self.records.lock().unwrap().push(Recorded::Status(id.to_string(), status));
         }
         fn log(&self, line: &str) {
@@ -1065,6 +1075,77 @@ mod tests {
         assert!(outputs.iter().any(|p| p.ends_with("photos/2026/deep.cleaned.png")), "{:?}", outputs);
         assert!(outputs.iter().any(|p| p.file_name().unwrap() == "top.cleaned.jpg"), "{:?}", outputs);
         fs::remove_dir_all(&batch).unwrap();
+    }
+
+    #[test]
+    fn cancel_during_clean_kills_child_and_keeps_committed() {
+        let Some(rt) = runtime_or_skip() else { return };
+        if std::process::Command::new("ffmpeg").arg("-version").output().is_err() {
+            eprintln!("SKIP: ffmpeg unavailable for mp4 cancel window");
+            return;
+        }
+        let dir = tempdir("runjob-cancelchild");
+        let j = dir.join("j.jpg");
+        let m = dir.join("m.mp4");
+        let p = dir.join("p.png");
+        fs::copy(fixture("dirty.jpg"), &j).unwrap();
+        fs::copy(fixture("dirty.mp4"), &m).unwrap();
+        fs::copy(fixture("dirty.png"), &p).unwrap();
+
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let events = MockEvents::default();
+        let cancel_for_cb = cancel.clone();
+        // deterministic window: fire cancel exactly when the slow mp4 enters Processing
+        events.set_on_status(move |id, st| {
+            if id == "m" && st == FileStatus::Processing {
+                cancel_for_cb.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let started = std::time::Instant::now();
+        let report = run_job(
+            &rt,
+            vec![item("j", j), item("m", m), item("p", p)],
+            &JobSettings::default(),
+            &events,
+            &cancel,
+        );
+        let elapsed = started.elapsed();
+
+        assert!(report.cancelled);
+        let get = |id: &str| report.results.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(get("j").status, FileStatus::Processed, "earlier committed file survives");
+        assert_eq!(get("m").status, FileStatus::Cancelled, "in-flight file cancelled");
+        assert_eq!(get("p").status, FileStatus::Cancelled, "later file never starts");
+
+        // p must never have entered the pipeline
+        let st = events.statuses();
+        assert!(!st.iter().any(|(id, s)| id == "p" && *s == FileStatus::Inspecting));
+
+        // only j's output committed
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 1, "{:?}", outputs);
+        assert!(outputs[0].file_name().unwrap().to_string_lossy().contains("j.cleaned"));
+
+        // child termination was prompt, not a full mp4 clean
+        assert!(elapsed.as_secs() < 30, "cancel should short-circuit: {elapsed:?}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn clean_cancellable_with_preset_cancel_returns_immediately() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("cancellable-preset");
+        let staged = dir.join("clip.mp4");
+        fs::copy(fixture("dirty.mp4"), &staged).unwrap();
+
+        let cancel = AtomicBool::new(true);
+        let started = std::time::Instant::now();
+        let outcome = rt.clean_cancellable(&staged, &CleanOptions::default(), &cancel).unwrap();
+        assert!(matches!(outcome, crate::mat2_runner::CleanRunOutcome::Cancelled));
+        assert!(started.elapsed().as_secs() < 5, "must return promptly");
+        assert!(!crate::mat2_runner::expected_cleaned_path(&staged).exists());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     fn walkdir_flat(root: &Path) -> Vec<PathBuf> {

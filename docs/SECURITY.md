@@ -38,6 +38,7 @@ Nothing else is granted. In particular:
 | `uuid` (v4) | Opaque, unguessable selection IDs; keeps the frontend unable to enumerate or construct registry keys | None |
 | `time` (0.3, local-offset/formatting/macros) | `YYYY-MM-DD_HHmmss` output-directory timestamps in local time; pure-Rust, no network/parser surface, replaces hand-rolled civil-calendar code | None |
 | `sha2` (0.10) | SHA-256 checksums proving "source unchanged" and "staging byte-identical" invariants (Task 8 tests + QA protocol); RustCrypto, pure Rust, no network | None |
+| `libc` (0.2, unix only) | Process-group signalling (`kill(-pgid, SIGTERM/SIGKILL)`) for controlled cancellation of MAT2 children, which internally spawn ProcessPoolExecutor workers; already an indirect dependency of the Rust std/tauri tree — no new supply chain | None |
 
 Registry policy (selection.rs, covered by unit tests): frontend-supplied data is
 only ever opaque IDs; unknown IDs resolve to nothing; duplicates dedupe by
