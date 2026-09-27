@@ -1,0 +1,10 @@
+.DS_Store
+upstream-mat2/
+mat2-main/
+.venv/
+.omo/
+.codegraph
+node_modules/
+app/src-tauri/target/
+app/dist/
+*.log
