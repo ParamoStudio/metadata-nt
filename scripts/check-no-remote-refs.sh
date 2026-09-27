@@ -11,8 +11,13 @@
 #        https://www.privacytools.io/
 #      (file created in Task 14; until then it does not exist and contributes nothing)
 #
-# Scope: app sources only. docs/, scripts/, lockfiles and node_modules are out of
-# scope by design (documentation may cite URLs; lockfiles carry registry metadata).
+# Scope: app PRODUCTION sources only. docs/, scripts/, lockfiles and
+# node_modules are out of scope by design (documentation may cite URLs;
+# lockfiles carry registry metadata). Rust `#[cfg(test)]` modules are also out
+# of scope: test fixtures may contain URL strings as hostile-input data (e.g.
+# log_sanitize tests proving links are never auto-created); test code never
+# ships in release binaries. Everything from the first `#[cfg(test)]` marker
+# to EOF in each .rs file is stripped before scanning.
 
 set -u
 
@@ -41,12 +46,35 @@ if [ ${#EXISTING[@]} -eq 0 ]; then
   exit 0
 fi
 
-VIOLATIONS="$(grep -rnoE '(https?|wss?)://[^"'"'"' )<>]*' "${EXISTING[@]}" 2>/dev/null \
+TMP_SCAN="$(mktemp -d)"
+trap 'rm -rf "${TMP_SCAN}"' EXIT
+
+SCAN_LIST="${TMP_SCAN}/files.txt"
+: > "${SCAN_LIST}"
+while IFS= read -r -d '' f; do
+  case "$f" in
+    *.rs)
+      # strip the test module (from first #[cfg(test)] to EOF), keep a stable
+      # path-prefixed stream for reporting
+      rel="${f#"${APP_DIR}/"}"
+      awk -v rel="${rel}" '
+        /^#\[cfg\(test\)\]/ { intest=1 }
+        !intest { print rel ":" FNR ":" $0 }
+      ' "$f" >> "${SCAN_LIST}"
+      ;;
+    *)
+      rel="${f#"${APP_DIR}/"}"
+      grep -n '' "$f" 2>/dev/null | sed "s|^|${rel}:|" >> "${SCAN_LIST}" || true
+      ;;
+  esac
+done < <(find "${EXISTING[@]}" -type f \( -name '*.rs' -o -name '*.ts' -o -name '*.html' -o -name '*.css' -o -name '*.json' \) -not -path '*/node_modules/*' -print0 2>/dev/null)
+
+VIOLATIONS="$(grep -E '(https?|wss?)://' "${SCAN_LIST}" 2>/dev/null \
   | grep -vE 'http://ipc\.localhost' \
   | grep -vE 'http://127\.0\.0\.1:1420' \
-  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:https://github\.com/jvoisin/mat2$' \
-  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:https://github\.com/freedomofpress/dangerzone$' \
-  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:https://www\.privacytools\.io/?$' \
+  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://github\.com/jvoisin/mat2"' \
+  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://github\.com/freedomofpress/dangerzone"' \
+  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://www\.privacytools\.io/?"' \
   || true)"
 
 if [ -n "${VIOLATIONS}" ]; then
