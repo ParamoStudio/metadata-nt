@@ -6,6 +6,7 @@
 //! frontend never receives a generic execute/shell/filesystem/URL capability,
 //! and absolute source paths never cross the boundary (opaque IDs only).
 
+mod log_sanitize;
 mod mat2_runner;
 mod model;
 mod selection;
