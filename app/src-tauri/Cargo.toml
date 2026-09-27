@@ -1,0 +1,21 @@
+[package]
+name = "mat2-wrapper"
+version = "0.1.0"
+description = "Offline desktop wrapper around the supplied upstream MAT2 metadata cleaner"
+authors = ["ParamoStudio"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "mat2_wrapper"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.0", features = [] }
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.12.0", features = [] }

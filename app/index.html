@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MAT2 Wrapper</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Top bar -->
+      <header id="topbar">
+        <h1>MAT2 Wrapper</h1>
+        <div id="runtime-status" role="status" aria-live="polite">
+          <span id="mat2-status-label">MAT2 status:</span>
+          <span id="mat2-status-value">Checking…</span>
+          <span id="version-info"></span>
+        </div>
+      </header>
+
+      <main id="columns">
+        <!-- Left panel: files + settings (scrollable) + pinned process bar -->
+        <section id="left-panel" aria-label="Files and settings">
+          <div id="left-scroll">
+          <div id="files-section">
+            <h2>Files</h2>
+            <div id="acquire-buttons">
+              <button id="btn-add-files" type="button">+ Files</button>
+              <button id="btn-add-folder" type="button">+ Folder</button>
+              <button id="btn-remove-selected" type="button" title="Remove checked items from the list">Remove selected</button>
+            </div>
+            <div id="drop-zone" tabindex="0" role="button" aria-label="Drop files or folders here">
+              <p id="drop-zone-title">Drop files or folders here</p>
+              <p id="drop-zone-actions">
+                <span id="drop-choose-files">Choose Files</span>
+                <span id="drop-choose-folder">Choose Folder</span>
+              </p>
+              <p id="drop-zone-note">Files stay on this device. Cleaning is performed locally with MAT2.</p>
+            </div>
+            <ul id="file-list" aria-label="Selected files"></ul>
+            <div id="extension-filters" role="group" aria-label="Filter by extension"></div>
+          </div>
+
+          <div id="settings-section">
+            <h2>Settings</h2>
+            <fieldset id="cleaning-mode">
+              <legend>Cleaning mode</legend>
+              <label>
+                <input type="radio" name="mode" value="maximum" checked />
+                Maximum removal
+              </label>
+              <p class="helper" id="helper-maximum">
+                Use MAT2's normal cleaning behavior. This may alter internal structure
+                or quality where MAT2 considers that necessary to remove metadata.
+              </p>
+              <label>
+                <input type="radio" name="mode" value="lightweight" />
+                Lightweight
+              </label>
+              <p class="helper" id="helper-lightweight">
+                Preserve more of the original structure. MAT2 may leave more metadata behind.
+              </p>
+            </fieldset>
+
+            <fieldset id="output-mode">
+              <legend>Output</legend>
+              <label>
+                <input type="radio" name="output" value="beside" checked />
+                Beside source
+              </label>
+              <label>
+                <input type="radio" name="output" value="custom" />
+                Custom folder
+              </label>
+              <span id="custom-output-path"></span>
+            </fieldset>
+
+            <details id="advanced">
+              <summary>Advanced</summary>
+              <div id="advanced-body">
+                <label>
+                  <input type="checkbox" id="opt-verbose" />
+                  Verbose MAT2 output
+                </label>
+                <label for="opt-unknown-members">Unknown members in archives</label>
+                <select id="opt-unknown-members">
+                  <option value="abort" selected>Abort (recommended)</option>
+                  <option value="omit">Omit</option>
+                  <option value="keep">Keep</option>
+                </select>
+                <p class="helper warning hidden" id="unknown-members-keep-warning">
+                  Keeping unknown archive members may preserve metadata.
+                </p>
+                <label>
+                  <input type="checkbox" id="opt-inplace" />
+                  Replace original files
+                </label>
+                <p class="helper warning hidden" id="inplace-warning">
+                  This changes the selected originals. No wrapper-created backup is guaranteed.
+                </p>
+                <div id="diagnostics" role="group" aria-label="MAT2 diagnostics">
+                  <button id="diag-version" type="button">Show MAT2 version</button>
+                  <button id="diag-formats" type="button">List supported formats</button>
+                  <button id="diag-deps" type="button">Check dependencies</button>
+                  <button id="diag-help" type="button">Show MAT2 help</button>
+                </div>
+              </div>
+            </details>
+          </div>
+          </div>
+
+          <div id="process-section">
+            <button id="btn-process" type="button" disabled>PROCESS</button>
+            <button id="btn-cancel" type="button" class="hidden">CANCEL</button>
+          </div>
+        </section>
+
+        <!-- Right panel: inspection / result + log -->
+        <section id="right-panel" aria-label="Inspection and results">
+          <div id="inspection-section">
+            <h2>Inspection / Result</h2>
+            <div id="inspection-content">
+              <p id="inspection-placeholder">Select a file to see MAT2-detected metadata.</p>
+              <table id="diff-table" class="hidden" aria-label="Metadata before and after">
+                <thead>
+                  <tr><th scope="col">Field</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Status</th></tr>
+                </thead>
+                <tbody id="diff-body"></tbody>
+              </table>
+              <div id="diff-summary" class="hidden"></div>
+              <p id="epistemic-note" class="helper hidden">
+                This does not guarantee that every possible form of metadata is absent.
+              </p>
+            </div>
+            <button id="btn-reveal" type="button" class="hidden">REVEAL OUTPUT</button>
+          </div>
+
+          <div id="log-section">
+            <h2>Process details</h2>
+            <pre id="log" role="log" aria-live="polite" aria-label="Technical process log"></pre>
+          </div>
+        </section>
+      </main>
+
+      <!-- Footer: external links + no-telemetry note -->
+      <footer id="footer">
+        <nav id="external-links" aria-label="External resources">
+          <button id="link-mat2" type="button">MAT2</button>
+          <span aria-hidden="true">·</span>
+          <button id="link-dangerzone" type="button" title="For documents you do not trust and may be malicious.">Dangerzone</button>
+          <span aria-hidden="true">·</span>
+          <button id="link-privacytools" type="button">PrivacyTools</button>
+        </nav>
+        <span id="no-telemetry">No telemetry</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
