@@ -36,6 +36,7 @@ Nothing else is granted. In particular:
 |---|---|---|
 | `tauri-plugin-dialog` | Native file/folder pickers, invoked **only from Rust** (`DialogExt`) inside `select_files`/`select_folder` commands; dialog results are registered directly in the Rust registry so absolute paths never round-trip through the WebView. Drag-and-drop arrives via Rust `WindowEvent::DragDrop`, likewise. | **None** — no `dialog:*` permission in any capability; the WebView cannot open dialogs or fabricate picker results itself |
 | `uuid` (v4) | Opaque, unguessable selection IDs; keeps the frontend unable to enumerate or construct registry keys | None |
+| `time` (0.3, local-offset/formatting/macros) | `YYYY-MM-DD_HHmmss` output-directory timestamps in local time; pure-Rust, no network/parser surface, replaces hand-rolled civil-calendar code | None |
 
 Registry policy (selection.rs, covered by unit tests): frontend-supplied data is
 only ever opaque IDs; unknown IDs resolve to nothing; duplicates dedupe by

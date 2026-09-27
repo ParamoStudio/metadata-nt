@@ -9,6 +9,7 @@
 mod log_sanitize;
 mod mat2_runner;
 mod model;
+mod output;
 mod selection;
 
 use std::fs;
