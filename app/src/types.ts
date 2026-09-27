@@ -1,9 +1,6 @@
 /**
  * Shared frontend types — mirror of the Rust public IPC model.
  * Keep in sync with app/src-tauri/src/model.rs.
- *
- * Task 2: shell only. Types are introduced incrementally by later tasks
- * (Task 4: selection, Task 9: diff model, Task 10: job states).
  */
 
 /** Per-file lifecycle status, per INTERFACE.md §7. */
@@ -27,4 +24,27 @@ export interface PublicSelectedFile {
   relative_path: string | null;
   size: number;
   status: FileStatus;
+}
+
+/** One MAT2-detected metadata field (nested keys flattened with " / "). */
+export interface MetadataEntry {
+  key: string;
+  display_value: string;
+}
+
+/** Before/after statuses, per INTERFACE.md §15 (no risk vocabulary). */
+export type DiffStatus = "Removed" | "Changed" | "Remaining";
+
+export interface MetadataDiff {
+  key: string;
+  before: string | null;
+  after: string | null;
+  status: DiffStatus;
+}
+
+export interface DiffSummary {
+  detected_before: number;
+  removed: number;
+  changed: number;
+  still_detectable: number;
 }

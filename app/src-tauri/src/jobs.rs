@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::mat2_runner::{expected_cleaned_path, CleanOptions, Mat2Output, Mat2Runtime};
+use crate::mat2_runner::{expected_cleaned_path, CleanOptions, Mat2Runtime};
+use crate::model::MetadataEntry;
 use crate::output;
 
 #[derive(Debug)]
@@ -115,16 +116,9 @@ pub fn copy_bytes_exclusive(src: &Path, dst: &Path) -> Result<(), String> {
 #[derive(Debug)]
 pub struct CleanOutcome {
     pub final_path: PathBuf,
-    pub pre_inspection: Mat2Output,
-    pub post_inspection: Mat2Output,
-}
-
-fn inspection_says_unsupported(out: &Mat2Output) -> bool {
-    out.stdout.contains("is not supported")
-}
-
-fn inspection_says_missing(out: &Mat2Output) -> bool {
-    out.stdout.contains("doesn't exist") || out.stdout.contains("is not a regular file")
+    pub mimetype: Option<String>,
+    pub pre_metadata: Vec<MetadataEntry>,
+    pub post_metadata: Vec<MetadataEntry>,
 }
 
 fn first_line(s: &str) -> String {
@@ -150,17 +144,24 @@ pub fn clean_one(
         ));
     }
 
-    let pre = rt
-        .inspect(source, opts.verbose)
-        .map_err(|e| PipelineError::Io(e))?;
-    if !pre.success {
-        return Err(PipelineError::Mat2Failure(first_line(&pre.stderr)));
+    let src_md = fs::metadata(source).map_err(|_| {
+        PipelineError::Io(format!(
+            "source missing or unreadable: {:?}",
+            source.file_name()
+        ))
+    })?;
+    if !src_md.is_file() {
+        return Err(PipelineError::Io("source is not a regular file".into()));
     }
-    if inspection_says_unsupported(&pre) {
-        return Err(PipelineError::Unsupported(first_line(&pre.stdout)));
+
+    let pre = rt.inspect_json(source).map_err(PipelineError::Io)?;
+    if let Some(err) = &pre.error {
+        return Err(PipelineError::Mat2Failure(first_line(err)));
     }
-    if inspection_says_missing(&pre) {
-        return Err(PipelineError::Io(first_line(&pre.stdout)));
+    if !pre.supported {
+        return Err(PipelineError::Unsupported(
+            pre.mimetype.clone().unwrap_or_else(|| "unknown format".into()),
+        ));
     }
 
     let stage = ws.stage_dir().map_err(PipelineError::Io)?;
@@ -195,10 +196,10 @@ pub fn clean_one(
         return Err(PipelineError::OutputInvalid("produced output is empty".into()));
     }
 
-    let post = rt
-        .inspect(&produced, opts.verbose)
-        .map_err(PipelineError::Io)?;
-    if !post.success {
+    let post = rt.inspect_json(&produced).map_err(|_| {
+        PipelineError::OutputInvalid("post-inspection could not complete".into())
+    })?;
+    if post.error.is_some() || !post.supported {
         return Err(PipelineError::OutputInvalid(
             "post-inspection could not complete".into(),
         ));
@@ -216,8 +217,9 @@ pub fn clean_one(
 
     Ok(CleanOutcome {
         final_path,
-        pre_inspection: pre,
-        post_inspection: post,
+        mimetype: pre.mimetype.clone(),
+        pre_metadata: pre.entries.clone(),
+        post_metadata: post.entries.clone(),
     })
 }
 
@@ -309,8 +311,11 @@ mod tests {
         assert!(outcome.final_path.starts_with(&canonical));
         assert_eq!(outcome.final_path.file_name().unwrap(), "dirty.cleaned.jpg");
         assert!(fs::metadata(&outcome.final_path).unwrap().len() > 0);
-        assert!(outcome.post_inspection.stdout.contains("No metadata found"));
-        assert!(outcome.pre_inspection.stdout.contains("Comment: Created with GIMP"));
+        assert!(outcome.post_metadata.is_empty(), "post: {:?}", outcome.post_metadata);
+        assert!(outcome
+            .pre_metadata
+            .iter()
+            .any(|e| e.key == "Comment" && e.display_value == "Created with GIMP"));
         assert_eq!(sha256_file(&src).unwrap(), before, "source must be unchanged");
 
         ws.cleanup();

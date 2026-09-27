@@ -2,6 +2,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::model::{parse_inspection_stdout, InspectionResult};
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum UnknownMembers {
     #[default]
@@ -184,6 +186,50 @@ impl Mat2Runtime {
     /// `success` alone here (docs/UPSTREAM_SNAPSHOT.md §4.5).
     pub fn inspect(&self, file: &Path, verbose: bool) -> Result<Mat2Output, String> {
         self.run(inspect_argv(file, verbose))
+    }
+
+    /// Structured inspection via the read-only libmat2 JSON adapter
+    /// (resources/mat2_inspect.py). Same libmat2 API the CLI uses; no
+    /// sanitisation semantics involved. Same no-shell invariant: fixed
+    /// interpreter + argv vector.
+    pub fn inspect_json(&self, file: &Path) -> Result<InspectionResult, String> {
+        let adapter = Self::adapter_path()?;
+        let upstream_dir = self
+            .script
+            .parent()
+            .ok_or_else(|| "MAT2 script has no parent directory".to_string())?;
+        let out = Command::new(&self.python)
+            .arg(&adapter)
+            .arg(upstream_dir)
+            .arg(file)
+            .output()
+            .map_err(|e| format!("failed to spawn inspection adapter: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "inspection adapter failed (exit {:?}): {}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        parse_inspection_stdout(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    pub fn adapter_path() -> Result<PathBuf, String> {
+        if let Ok(p) = std::env::var("MAT2_WRAPPER_INSPECT_ADAPTER") {
+            let path = PathBuf::from(p);
+            if path.exists() {
+                return Ok(path);
+            }
+            return Err(format!(
+                "MAT2_WRAPPER_INSPECT_ADAPTER points at a missing file: {:?}",
+                path
+            ));
+        }
+        let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/mat2_inspect.py");
+        if dev.exists() {
+            return Ok(dev);
+        }
+        Err("inspection adapter mat2_inspect.py not found".to_string())
     }
 
     /// Normal (or lightweight/inplace) cleaning of a single file.
@@ -403,6 +449,61 @@ mod tests {
         // documents the false-success trap: exit 0 despite "not supported"
         assert!(shown.success, "show mode should exit 0: {:?}", shown);
         assert!(shown.stdout.contains("not supported"), "stdout: {:?}", shown.stdout);
+
+        let structured = rt.inspect_json(&weird).unwrap();
+        assert!(structured.error.is_none());
+        assert!(!structured.supported);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn integration_adapter_matches_cli_show() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("adaptercli");
+        let fixture = dir.join("dirty.jpg");
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.ancestors().nth(2).unwrap();
+        std::fs::copy(root.join("upstream-mat2/tests/data/dirty.jpg"), &fixture).unwrap();
+
+        let cli = rt.inspect(&fixture, false).unwrap();
+        let structured = rt.inspect_json(&fixture).unwrap();
+        assert!(cli.stdout.contains("Comment: Created with GIMP"));
+        assert!(structured.supported && structured.error.is_none());
+        assert_eq!(structured.mimetype.as_deref(), Some("image/jpeg"));
+        assert!(structured
+            .entries
+            .iter()
+            .any(|e| e.key == "Comment" && e.display_value == "Created with GIMP"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn integration_adapter_flattens_nested_archive_metadata() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("adapternested");
+        let fixture = dir.join("dirty.docx");
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.ancestors().nth(2).unwrap();
+        std::fs::copy(root.join("upstream-mat2/tests/data/dirty.docx"), &fixture).unwrap();
+
+        let structured = rt.inspect_json(&fixture).unwrap();
+        assert!(structured.supported, "{:?}", structured);
+        assert!(!structured.entries.is_empty());
+        assert!(
+            structured.entries.iter().any(|e| e.key.contains(" / ")),
+            "expected member-nested keys, got {:?}",
+            structured.entries.iter().map(|e| &e.key).collect::<Vec<_>>()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn integration_adapter_reports_missing_file_as_error() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("adaptermissing");
+        let missing = dir.join("ghost.jpg");
+        let structured = rt.inspect_json(&missing).unwrap();
+        assert!(structured.error.is_some() || !structured.supported);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
