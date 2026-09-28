@@ -1,0 +1,12 @@
+{
+  "camera_device_profiles": 24,
+  "location_profiles": 50,
+  "name_locales": 10,
+  "name_component_values": 480,
+  "document_software_profiles": 12,
+  "image_software_profiles": 8,
+  "video_software_profiles": 9,
+  "audio_software_profiles": 6,
+  "archetypes": 8,
+  "format_recipes": 15
+}

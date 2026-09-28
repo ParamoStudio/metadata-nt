@@ -1,0 +1,2548 @@
+{
+  "schema_version": "1.0.0",
+  "pack_name": "Synthetic Metadata Privacy Profiles",
+  "generated_at_utc": "2026-09-28T00:49:20Z",
+  "purpose": "Optional post-MAT2 decoy metadata profiles for privacy workflows and test fixtures.",
+  "design_principles": [
+    "MAT2 cleans first; synthetic metadata is applied only to the cleaned copy.",
+    "Generate coherent profiles, not independently randomized tags.",
+    "Sparse ordinary-looking metadata is preferred over filling every writable field.",
+    "Never copy serial numbers, UUIDs, emails, phone numbers, or full real identities from source datasets.",
+    "Do not synthesize semantic content claims (title, subject, artist, album, copyright) by default.",
+    "Exact GPS is opt-in and disabled by default; city-level location is safer.",
+    "Synthetic fields must be visibly labeled as synthetic inside the application UI, even though the output file contains ordinary metadata values."
+  ],
+  "defaults": {
+    "synthetic_mode": "off",
+    "profile_scope": "per_file",
+    "location_mode": "off",
+    "persona_mode": "synthetic_alias_when_format_normally_uses_author",
+    "serial_mode": "off",
+    "semantic_content_fields": "never",
+    "rng": "os_csprng",
+    "seed_persistence": "none",
+    "deterministic_within_job": true,
+    "derive_seed_from_input_hash": false,
+    "writer_failure_policy": "fail_closed_keep_clean_mat2_output_separate_do_not_claim_spoof_success"
+  },
+  "generation_rules": {
+    "timestamp": {
+      "min_year": 2019,
+      "max_year": 2026,
+      "device_release_guard": "capture_date_year >= selected_device.earliest_plausible_year",
+      "ordering": [
+        "create <= modify",
+        "capture <= modify"
+      ],
+      "timezone_source": "selected_location.timezone if location enabled else random plausible timezone from profile locale",
+      "seconds_policy": "natural_0_to_59",
+      "batch_consistency": "consistent batch persona may share timezone/device while timestamps vary monotonically or independently"
+    },
+    "identifiers": {
+      "uuid": "random RFC4122 v4",
+      "document_id": "new random UUID-derived XMP identifier",
+      "instance_id": "new random UUID-derived XMP instance identifier",
+      "serial": "only if explicitly enabled; generate synthetic pattern, never source from real device databases"
+    },
+    "location": {
+      "default": "off",
+      "city_only": "write city/country where format supports it without GPS",
+      "gps_opt_in": "choose a city profile then jitter around city center within declared radius and round precision",
+      "private_address_policy": "never generate or store street addresses"
+    },
+    "persona": {
+      "construction": "choose locale -> given name + surname from same locale pool",
+      "real_identity_policy": "components are common-name pools; combinations are synthetic aliases and must not be presented as real people",
+      "email_phone": "never generated"
+    },
+    "sparsity": {
+      "rule": "sample fields according to archetype sparsity rather than populating every possible tag",
+      "reason": "ordinary files are often sparse; overpopulation creates an artificial fingerprint"
+    }
+  },
+  "name_pools": {
+    "es-ES": {
+      "given": [
+        "Alex",
+        "Andrea",
+        "Adrián",
+        "Alicia",
+        "Álvaro",
+        "Ana",
+        "Bruno",
+        "Carla",
+        "Claudia",
+        "Daniel",
+        "David",
+        "Elena",
+        "Eva",
+        "Gabriel",
+        "Hugo",
+        "Irene",
+        "Javier",
+        "Laura",
+        "Lucía",
+        "Marcos",
+        "Marta",
+        "Nora",
+        "Pablo",
+        "Sergio"
+      ],
+      "surname": [
+        "Alonso",
+        "Blanco",
+        "Castro",
+        "Delgado",
+        "Díaz",
+        "Ferrer",
+        "García",
+        "Giménez",
+        "López",
+        "Martín",
+        "Moreno",
+        "Navarro",
+        "Ortega",
+        "Pérez",
+        "Ramírez",
+        "Ramos",
+        "Ruiz",
+        "Sánchez",
+        "Santos",
+        "Serrano",
+        "Torres",
+        "Vega",
+        "Vidal",
+        "Zamora"
+      ]
+    },
+    "en-GB": {
+      "given": [
+        "Alex",
+        "Alice",
+        "Amelia",
+        "Arthur",
+        "Ben",
+        "Charlotte",
+        "Daniel",
+        "Eleanor",
+        "Elliot",
+        "Emily",
+        "Eva",
+        "George",
+        "Grace",
+        "Harry",
+        "Isla",
+        "Jack",
+        "James",
+        "Leo",
+        "Maya",
+        "Noah",
+        "Oliver",
+        "Oscar",
+        "Ruby",
+        "Sophie"
+      ],
+      "surname": [
+        "Adams",
+        "Baker",
+        "Brown",
+        "Clark",
+        "Cooper",
+        "Davies",
+        "Evans",
+        "Foster",
+        "Green",
+        "Hall",
+        "Harris",
+        "Hill",
+        "Hughes",
+        "Jones",
+        "King",
+        "Lewis",
+        "Martin",
+        "Morgan",
+        "Parker",
+        "Roberts",
+        "Scott",
+        "Taylor",
+        "Walker",
+        "Wilson"
+      ]
+    },
+    "en-US": {
+      "given": [
+        "Alex",
+        "Avery",
+        "Blake",
+        "Cameron",
+        "Casey",
+        "Charlie",
+        "Daniel",
+        "Drew",
+        "Elliot",
+        "Emerson",
+        "Eva",
+        "Harper",
+        "Jordan",
+        "Logan",
+        "Morgan",
+        "Noah",
+        "Parker",
+        "Quinn",
+        "Reese",
+        "Riley",
+        "Robin",
+        "Sam",
+        "Taylor",
+        "Wren"
+      ],
+      "surname": [
+        "Adams",
+        "Allen",
+        "Baker",
+        "Bennett",
+        "Brooks",
+        "Carter",
+        "Collins",
+        "Cooper",
+        "Davis",
+        "Edwards",
+        "Evans",
+        "Foster",
+        "Gray",
+        "Hayes",
+        "Johnson",
+        "Lee",
+        "Miller",
+        "Morgan",
+        "Parker",
+        "Reed",
+        "Scott",
+        "Taylor",
+        "Walker",
+        "Young"
+      ]
+    },
+    "fr-FR": {
+      "given": [
+        "Alex",
+        "Amélie",
+        "Arthur",
+        "Camille",
+        "Chloé",
+        "Clara",
+        "Élise",
+        "Emma",
+        "Gabriel",
+        "Hugo",
+        "Jade",
+        "Jules",
+        "Léa",
+        "Léo",
+        "Lou",
+        "Lucas",
+        "Manon",
+        "Nina",
+        "Noé",
+        "Paul",
+        "Sarah",
+        "Théo",
+        "Victor",
+        "Zoé"
+      ],
+      "surname": [
+        "Bernard",
+        "Blanc",
+        "Bonnet",
+        "Chevalier",
+        "David",
+        "Dubois",
+        "Dupont",
+        "Fournier",
+        "François",
+        "Garcia",
+        "Girard",
+        "Laurent",
+        "Lefèvre",
+        "Leroy",
+        "Martin",
+        "Mercier",
+        "Michel",
+        "Moreau",
+        "Petit",
+        "Richard",
+        "Robert",
+        "Roux",
+        "Simon",
+        "Thomas"
+      ]
+    },
+    "de-DE": {
+      "given": [
+        "Alex",
+        "Anna",
+        "Ben",
+        "Clara",
+        "Emil",
+        "Emma",
+        "Felix",
+        "Finn",
+        "Greta",
+        "Hannah",
+        "Jonas",
+        "Julia",
+        "Lena",
+        "Leon",
+        "Leonie",
+        "Lina",
+        "Lukas",
+        "Mara",
+        "Mia",
+        "Noah",
+        "Paul",
+        "Sophie",
+        "Theo",
+        "Tom"
+      ],
+      "surname": [
+        "Bauer",
+        "Becker",
+        "Braun",
+        "Fischer",
+        "Frank",
+        "Hoffmann",
+        "Kaiser",
+        "Klein",
+        "Koch",
+        "Krüger",
+        "Lange",
+        "Lehmann",
+        "Mayer",
+        "Meyer",
+        "Richter",
+        "Schmidt",
+        "Schneider",
+        "Schulz",
+        "Schwarz",
+        "Vogel",
+        "Wagner",
+        "Weber",
+        "Werner",
+        "Wolf"
+      ]
+    },
+    "it-IT": {
+      "given": [
+        "Alessio",
+        "Andrea",
+        "Anna",
+        "Chiara",
+        "Davide",
+        "Elena",
+        "Emma",
+        "Federico",
+        "Francesca",
+        "Gabriele",
+        "Giulia",
+        "Luca",
+        "Marco",
+        "Martina",
+        "Matteo",
+        "Mia",
+        "Nicola",
+        "Paolo",
+        "Sara",
+        "Sofia",
+        "Tommaso",
+        "Valentina",
+        "Viola",
+        "Vittoria"
+      ],
+      "surname": [
+        "Bianchi",
+        "Bruno",
+        "Colombo",
+        "Conti",
+        "Costa",
+        "De Luca",
+        "Esposito",
+        "Ferrari",
+        "Fontana",
+        "Gallo",
+        "Greco",
+        "Leone",
+        "Lombardi",
+        "Mancini",
+        "Marino",
+        "Moretti",
+        "Ricci",
+        "Rinaldi",
+        "Romano",
+        "Rossi",
+        "Santoro",
+        "Serra",
+        "Villa",
+        "Vitale"
+      ]
+    },
+    "pt-BR": {
+      "given": [
+        "Alice",
+        "Ana",
+        "Arthur",
+        "Beatriz",
+        "Bruno",
+        "Caio",
+        "Clara",
+        "Daniel",
+        "Davi",
+        "Elisa",
+        "Gabriel",
+        "Helena",
+        "Isabela",
+        "João",
+        "Laura",
+        "Lucas",
+        "Marina",
+        "Mateus",
+        "Miguel",
+        "Nina",
+        "Rafael",
+        "Sofia",
+        "Theo",
+        "Vitória"
+      ],
+      "surname": [
+        "Almeida",
+        "Alves",
+        "Barbosa",
+        "Cardoso",
+        "Carvalho",
+        "Costa",
+        "Fernandes",
+        "Ferreira",
+        "Gomes",
+        "Lima",
+        "Martins",
+        "Melo",
+        "Mendes",
+        "Nunes",
+        "Oliveira",
+        "Pereira",
+        "Ribeiro",
+        "Rocha",
+        "Rodrigues",
+        "Santos",
+        "Silva",
+        "Sousa",
+        "Teixeira",
+        "Vieira"
+      ]
+    },
+    "nl-NL": {
+      "given": [
+        "Alex",
+        "Anna",
+        "Bram",
+        "Daan",
+        "Eva",
+        "Finn",
+        "Fleur",
+        "Isa",
+        "Jesse",
+        "Julia",
+        "Lars",
+        "Levi",
+        "Lieke",
+        "Lotte",
+        "Lucas",
+        "Mila",
+        "Noah",
+        "Nora",
+        "Olivia",
+        "Sam",
+        "Sara",
+        "Sem",
+        "Tess",
+        "Thomas"
+      ],
+      "surname": [
+        "Bakker",
+        "Bos",
+        "De Boer",
+        "De Jong",
+        "De Vries",
+        "Dekker",
+        "Dijkstra",
+        "Jacobs",
+        "Jansen",
+        "Kok",
+        "Kuiper",
+        "Mulder",
+        "Peters",
+        "Smit",
+        "Smits",
+        "Van den Berg",
+        "Van Dijk",
+        "Van Leeuwen",
+        "Visser",
+        "Vos",
+        "Willems",
+        "Wolters",
+        "Zwart",
+        "Meijer"
+      ]
+    },
+    "pl-PL": {
+      "given": [
+        "Adam",
+        "Aleksandra",
+        "Anna",
+        "Antoni",
+        "Barbara",
+        "Filip",
+        "Hanna",
+        "Jan",
+        "Julia",
+        "Kacper",
+        "Karolina",
+        "Klara",
+        "Lena",
+        "Maja",
+        "Marek",
+        "Michał",
+        "Natalia",
+        "Oliwia",
+        "Paweł",
+        "Piotr",
+        "Szymon",
+        "Tomasz",
+        "Wiktoria",
+        "Zofia"
+      ],
+      "surname": [
+        "Adamski",
+        "Dąbrowski",
+        "Jankowski",
+        "Kaczmarek",
+        "Kowalczyk",
+        "Kowalski",
+        "Krawczyk",
+        "Lewandowski",
+        "Majewski",
+        "Mazur",
+        "Michalski",
+        "Nowak",
+        "Nowicki",
+        "Pawlak",
+        "Piotrowski",
+        "Sikora",
+        "Szymański",
+        "Wieczorek",
+        "Wiśniewski",
+        "Wójcik",
+        "Woźniak",
+        "Zając",
+        "Zalewski",
+        "Zieliński"
+      ]
+    },
+    "tr-TR": {
+      "given": [
+        "Ahmet",
+        "Ali",
+        "Arda",
+        "Aslı",
+        "Ayşe",
+        "Berk",
+        "Can",
+        "Ceren",
+        "Defne",
+        "Deniz",
+        "Ece",
+        "Elif",
+        "Emir",
+        "Eren",
+        "Kerem",
+        "Mert",
+        "Merve",
+        "Naz",
+        "Selin",
+        "Sena",
+        "Tolga",
+        "Yağmur",
+        "Yasemin",
+        "Zeynep"
+      ],
+      "surname": [
+        "Aksoy",
+        "Arslan",
+        "Aydın",
+        "Çelik",
+        "Demir",
+        "Doğan",
+        "Eren",
+        "Erdoğan",
+        "Güler",
+        "Güneş",
+        "Kaya",
+        "Koç",
+        "Kurt",
+        "Özdemir",
+        "Öztürk",
+        "Şahin",
+        "Şen",
+        "Taş",
+        "Tekin",
+        "Toprak",
+        "Uçar",
+        "Yıldız",
+        "Yılmaz",
+        "Yüksel"
+      ]
+    }
+  },
+  "location_profiles": [
+    {
+      "id": "loc_001",
+      "city": "Madrid",
+      "country_code": "ES",
+      "timezone": "Europe/Madrid",
+      "center_lat": 40.4168,
+      "center_lon": -3.7038,
+      "gps_jitter_radius_km": 8,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_002",
+      "city": "Barcelona",
+      "country_code": "ES",
+      "timezone": "Europe/Madrid",
+      "center_lat": 41.3874,
+      "center_lon": 2.1686,
+      "gps_jitter_radius_km": 8,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_003",
+      "city": "Palma",
+      "country_code": "ES",
+      "timezone": "Europe/Madrid",
+      "center_lat": 39.5696,
+      "center_lon": 2.6502,
+      "gps_jitter_radius_km": 6,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_004",
+      "city": "Valencia",
+      "country_code": "ES",
+      "timezone": "Europe/Madrid",
+      "center_lat": 39.4699,
+      "center_lon": -0.3763,
+      "gps_jitter_radius_km": 7,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_005",
+      "city": "Seville",
+      "country_code": "ES",
+      "timezone": "Europe/Madrid",
+      "center_lat": 37.3891,
+      "center_lon": -5.9845,
+      "gps_jitter_radius_km": 7,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_006",
+      "city": "Lisbon",
+      "country_code": "PT",
+      "timezone": "Europe/Lisbon",
+      "center_lat": 38.7223,
+      "center_lon": -9.1393,
+      "gps_jitter_radius_km": 7,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_007",
+      "city": "Paris",
+      "country_code": "FR",
+      "timezone": "Europe/Paris",
+      "center_lat": 48.8566,
+      "center_lon": 2.3522,
+      "gps_jitter_radius_km": 10,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_008",
+      "city": "Berlin",
+      "country_code": "DE",
+      "timezone": "Europe/Berlin",
+      "center_lat": 52.52,
+      "center_lon": 13.405,
+      "gps_jitter_radius_km": 10,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_009",
+      "city": "London",
+      "country_code": "GB",
+      "timezone": "Europe/London",
+      "center_lat": 51.5074,
+      "center_lon": -0.1278,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_010",
+      "city": "Dublin",
+      "country_code": "IE",
+      "timezone": "Europe/Dublin",
+      "center_lat": 53.3498,
+      "center_lon": -6.2603,
+      "gps_jitter_radius_km": 7,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_011",
+      "city": "Amsterdam",
+      "country_code": "NL",
+      "timezone": "Europe/Amsterdam",
+      "center_lat": 52.3676,
+      "center_lon": 4.9041,
+      "gps_jitter_radius_km": 6,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_012",
+      "city": "Brussels",
+      "country_code": "BE",
+      "timezone": "Europe/Brussels",
+      "center_lat": 50.8503,
+      "center_lon": 4.3517,
+      "gps_jitter_radius_km": 6,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_013",
+      "city": "Rome",
+      "country_code": "IT",
+      "timezone": "Europe/Rome",
+      "center_lat": 41.9028,
+      "center_lon": 12.4964,
+      "gps_jitter_radius_km": 9,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_014",
+      "city": "Milan",
+      "country_code": "IT",
+      "timezone": "Europe/Rome",
+      "center_lat": 45.4642,
+      "center_lon": 9.19,
+      "gps_jitter_radius_km": 7,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_015",
+      "city": "Vienna",
+      "country_code": "AT",
+      "timezone": "Europe/Vienna",
+      "center_lat": 48.2082,
+      "center_lon": 16.3738,
+      "gps_jitter_radius_km": 8,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_016",
+      "city": "Prague",
+      "country_code": "CZ",
+      "timezone": "Europe/Prague",
+      "center_lat": 50.0755,
+      "center_lon": 14.4378,
+      "gps_jitter_radius_km": 7,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_017",
+      "city": "Warsaw",
+      "country_code": "PL",
+      "timezone": "Europe/Warsaw",
+      "center_lat": 52.2297,
+      "center_lon": 21.0122,
+      "gps_jitter_radius_km": 8,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_018",
+      "city": "Athens",
+      "country_code": "GR",
+      "timezone": "Europe/Athens",
+      "center_lat": 37.9838,
+      "center_lon": 23.7275,
+      "gps_jitter_radius_km": 8,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_019",
+      "city": "Istanbul",
+      "country_code": "TR",
+      "timezone": "Europe/Istanbul",
+      "center_lat": 41.0082,
+      "center_lon": 28.9784,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_020",
+      "city": "New York",
+      "country_code": "US",
+      "timezone": "America/New_York",
+      "center_lat": 40.7128,
+      "center_lon": -74.006,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_021",
+      "city": "Washington",
+      "country_code": "US",
+      "timezone": "America/New_York",
+      "center_lat": 38.9072,
+      "center_lon": -77.0369,
+      "gps_jitter_radius_km": 9,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_022",
+      "city": "Chicago",
+      "country_code": "US",
+      "timezone": "America/Chicago",
+      "center_lat": 41.8781,
+      "center_lon": -87.6298,
+      "gps_jitter_radius_km": 10,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_023",
+      "city": "Los Angeles",
+      "country_code": "US",
+      "timezone": "America/Los_Angeles",
+      "center_lat": 34.0522,
+      "center_lon": -118.2437,
+      "gps_jitter_radius_km": 16,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_024",
+      "city": "Mexico City",
+      "country_code": "MX",
+      "timezone": "America/Mexico_City",
+      "center_lat": 19.4326,
+      "center_lon": -99.1332,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_025",
+      "city": "Toronto",
+      "country_code": "CA",
+      "timezone": "America/Toronto",
+      "center_lat": 43.6532,
+      "center_lon": -79.3832,
+      "gps_jitter_radius_km": 10,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_026",
+      "city": "Montreal",
+      "country_code": "CA",
+      "timezone": "America/Toronto",
+      "center_lat": 45.5017,
+      "center_lon": -73.5673,
+      "gps_jitter_radius_km": 9,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_027",
+      "city": "Buenos Aires",
+      "country_code": "AR",
+      "timezone": "America/Argentina/Buenos_Aires",
+      "center_lat": -34.6037,
+      "center_lon": -58.3816,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_028",
+      "city": "São Paulo",
+      "country_code": "BR",
+      "timezone": "America/Sao_Paulo",
+      "center_lat": -23.5505,
+      "center_lon": -46.6333,
+      "gps_jitter_radius_km": 14,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_029",
+      "city": "Bogotá",
+      "country_code": "CO",
+      "timezone": "America/Bogota",
+      "center_lat": 4.711,
+      "center_lon": -74.0721,
+      "gps_jitter_radius_km": 10,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_030",
+      "city": "Santiago",
+      "country_code": "CL",
+      "timezone": "America/Santiago",
+      "center_lat": -33.4489,
+      "center_lon": -70.6693,
+      "gps_jitter_radius_km": 10,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_031",
+      "city": "Cape Town",
+      "country_code": "ZA",
+      "timezone": "Africa/Johannesburg",
+      "center_lat": -33.9249,
+      "center_lon": 18.4241,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_032",
+      "city": "Johannesburg",
+      "country_code": "ZA",
+      "timezone": "Africa/Johannesburg",
+      "center_lat": -26.2041,
+      "center_lon": 28.0473,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_033",
+      "city": "Nairobi",
+      "country_code": "KE",
+      "timezone": "Africa/Nairobi",
+      "center_lat": -1.2921,
+      "center_lon": 36.8219,
+      "gps_jitter_radius_km": 9,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_034",
+      "city": "Cairo",
+      "country_code": "EG",
+      "timezone": "Africa/Cairo",
+      "center_lat": 30.0444,
+      "center_lon": 31.2357,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_035",
+      "city": "Casablanca",
+      "country_code": "MA",
+      "timezone": "Africa/Casablanca",
+      "center_lat": 33.5731,
+      "center_lon": -7.5898,
+      "gps_jitter_radius_km": 9,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_036",
+      "city": "Tunis",
+      "country_code": "TN",
+      "timezone": "Africa/Tunis",
+      "center_lat": 36.8065,
+      "center_lon": 10.1815,
+      "gps_jitter_radius_km": 8,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_037",
+      "city": "Beirut",
+      "country_code": "LB",
+      "timezone": "Asia/Beirut",
+      "center_lat": 33.8938,
+      "center_lon": 35.5018,
+      "gps_jitter_radius_km": 7,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_038",
+      "city": "Amman",
+      "country_code": "JO",
+      "timezone": "Asia/Amman",
+      "center_lat": 31.9539,
+      "center_lon": 35.9106,
+      "gps_jitter_radius_km": 7,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_039",
+      "city": "Tokyo",
+      "country_code": "JP",
+      "timezone": "Asia/Tokyo",
+      "center_lat": 35.6762,
+      "center_lon": 139.6503,
+      "gps_jitter_radius_km": 15,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_040",
+      "city": "Seoul",
+      "country_code": "KR",
+      "timezone": "Asia/Seoul",
+      "center_lat": 37.5665,
+      "center_lon": 126.978,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_041",
+      "city": "Taipei",
+      "country_code": "TW",
+      "timezone": "Asia/Taipei",
+      "center_lat": 25.033,
+      "center_lon": 121.5654,
+      "gps_jitter_radius_km": 9,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_042",
+      "city": "Singapore",
+      "country_code": "SG",
+      "timezone": "Asia/Singapore",
+      "center_lat": 1.3521,
+      "center_lon": 103.8198,
+      "gps_jitter_radius_km": 10,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_043",
+      "city": "Bangkok",
+      "country_code": "TH",
+      "timezone": "Asia/Bangkok",
+      "center_lat": 13.7563,
+      "center_lon": 100.5018,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_044",
+      "city": "Manila",
+      "country_code": "PH",
+      "timezone": "Asia/Manila",
+      "center_lat": 14.5995,
+      "center_lon": 120.9842,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_045",
+      "city": "Jakarta",
+      "country_code": "ID",
+      "timezone": "Asia/Jakarta",
+      "center_lat": -6.2088,
+      "center_lon": 106.8456,
+      "gps_jitter_radius_km": 14,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_046",
+      "city": "Delhi",
+      "country_code": "IN",
+      "timezone": "Asia/Kolkata",
+      "center_lat": 28.6139,
+      "center_lon": 77.209,
+      "gps_jitter_radius_km": 14,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_047",
+      "city": "Mumbai",
+      "country_code": "IN",
+      "timezone": "Asia/Kolkata",
+      "center_lat": 19.076,
+      "center_lon": 72.8777,
+      "gps_jitter_radius_km": 14,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_048",
+      "city": "Sydney",
+      "country_code": "AU",
+      "timezone": "Australia/Sydney",
+      "center_lat": -33.8688,
+      "center_lon": 151.2093,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_049",
+      "city": "Melbourne",
+      "country_code": "AU",
+      "timezone": "Australia/Melbourne",
+      "center_lat": -37.8136,
+      "center_lon": 144.9631,
+      "gps_jitter_radius_km": 12,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    },
+    {
+      "id": "loc_050",
+      "city": "Auckland",
+      "country_code": "NZ",
+      "timezone": "Pacific/Auckland",
+      "center_lat": -36.8509,
+      "center_lon": 174.7645,
+      "gps_jitter_radius_km": 9,
+      "precision_policy": "round_to_4_or_5_decimals_after_jitter",
+      "note": "city-level decoy; exact GPS is opt-in"
+    }
+  ],
+  "camera_device_profiles": [
+    {
+      "id": "apple_iphone_11_pro",
+      "make": "Apple",
+      "model": "iPhone 11 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2019,
+      "common_pixel_dimensions": [
+        "4032x3024",
+        "3024x4032"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "apple_iphone_12_pro",
+      "make": "Apple",
+      "model": "iPhone 12 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2020,
+      "common_pixel_dimensions": [
+        "4032x3024",
+        "3024x4032"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "apple_iphone_13_pro",
+      "make": "Apple",
+      "model": "iPhone 13 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2021,
+      "common_pixel_dimensions": [
+        "4032x3024",
+        "3024x4032"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "apple_iphone_14_pro",
+      "make": "Apple",
+      "model": "iPhone 14 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2022,
+      "common_pixel_dimensions": [
+        "4032x3024",
+        "3024x4032",
+        "8064x6048"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "apple_iphone_15_pro",
+      "make": "Apple",
+      "model": "iPhone 15 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2023,
+      "common_pixel_dimensions": [
+        "4032x3024",
+        "3024x4032",
+        "8064x6048"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "apple_iphone_16_pro",
+      "make": "Apple",
+      "model": "iPhone 16 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2024,
+      "common_pixel_dimensions": [
+        "4032x3024",
+        "3024x4032",
+        "8064x6048"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "google_pixel_6_pro",
+      "make": "Google",
+      "model": "Pixel 6 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2021,
+      "common_pixel_dimensions": [
+        "4080x3072",
+        "3072x4080"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "google_pixel_7_pro",
+      "make": "Google",
+      "model": "Pixel 7 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2022,
+      "common_pixel_dimensions": [
+        "4080x3072",
+        "3072x4080"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "google_pixel_8_pro",
+      "make": "Google",
+      "model": "Pixel 8 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2023,
+      "common_pixel_dimensions": [
+        "4080x3072",
+        "3072x4080"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "google_pixel_9_pro",
+      "make": "Google",
+      "model": "Pixel 9 Pro",
+      "class": "smartphone",
+      "earliest_plausible_year": 2024,
+      "common_pixel_dimensions": [
+        "4080x3072",
+        "3072x4080"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "samsung_s21_ultra",
+      "make": "samsung",
+      "model": "SM-G998B",
+      "class": "smartphone",
+      "earliest_plausible_year": 2021,
+      "common_pixel_dimensions": [
+        "4000x3000",
+        "3000x4000"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "samsung_s22_ultra",
+      "make": "samsung",
+      "model": "SM-S908B",
+      "class": "smartphone",
+      "earliest_plausible_year": 2022,
+      "common_pixel_dimensions": [
+        "4000x3000",
+        "3000x4000"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "samsung_s23_ultra",
+      "make": "samsung",
+      "model": "SM-S918B",
+      "class": "smartphone",
+      "earliest_plausible_year": 2023,
+      "common_pixel_dimensions": [
+        "4000x3000",
+        "3000x4000"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "samsung_s24_ultra",
+      "make": "samsung",
+      "model": "SM-S928B",
+      "class": "smartphone",
+      "earliest_plausible_year": 2024,
+      "common_pixel_dimensions": [
+        "4000x3000",
+        "3000x4000"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "canon_eos_r5",
+      "make": "Canon",
+      "model": "Canon EOS R5",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2020,
+      "common_pixel_dimensions": [
+        "8192x5464",
+        "5464x8192"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "canon_eos_r6_m2",
+      "make": "Canon",
+      "model": "Canon EOS R6 Mark II",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2022,
+      "common_pixel_dimensions": [
+        "6000x4000",
+        "4000x6000"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "canon_eos_r8",
+      "make": "Canon",
+      "model": "Canon EOS R8",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2023,
+      "common_pixel_dimensions": [
+        "6000x4000",
+        "4000x6000"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "sony_a7_iv",
+      "make": "SONY",
+      "model": "ILCE-7M4",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2021,
+      "common_pixel_dimensions": [
+        "7008x4672",
+        "4672x7008"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "sony_a7c_ii",
+      "make": "SONY",
+      "model": "ILCE-7CM2",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2023,
+      "common_pixel_dimensions": [
+        "7008x4672",
+        "4672x7008"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "nikon_z6_ii",
+      "make": "NIKON CORPORATION",
+      "model": "NIKON Z 6_2",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2020,
+      "common_pixel_dimensions": [
+        "6048x4024",
+        "4024x6048"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "nikon_zf",
+      "make": "NIKON CORPORATION",
+      "model": "NIKON Z f",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2023,
+      "common_pixel_dimensions": [
+        "6048x4032",
+        "4032x6048"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "fujifilm_xt5",
+      "make": "FUJIFILM",
+      "model": "X-T5",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2022,
+      "common_pixel_dimensions": [
+        "7728x5152",
+        "5152x7728"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "fujifilm_xs20",
+      "make": "FUJIFILM",
+      "model": "X-S20",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2023,
+      "common_pixel_dimensions": [
+        "6240x4160",
+        "4160x6240"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    },
+    {
+      "id": "om_system_om1",
+      "make": "OM Digital Solutions",
+      "model": "OM-1",
+      "class": "mirrorless",
+      "earliest_plausible_year": 2022,
+      "common_pixel_dimensions": [
+        "5184x3888",
+        "3888x5184"
+      ],
+      "fields_default": [
+        "Make",
+        "Model",
+        "DateTimeOriginal"
+      ],
+      "fields_optional": [
+        "Software",
+        "LensModel",
+        "GPS",
+        "SyntheticSerial"
+      ],
+      "synthetic_serial_policy": "off_by_default_generate_format_only_never_copy_real_serial"
+    }
+  ],
+  "document_software_profiles": [
+    {
+      "id": "libreoffice_7",
+      "creator": "LibreOffice",
+      "producer": "LibreOffice",
+      "earliest_year": 2020,
+      "family": "office"
+    },
+    {
+      "id": "libreoffice_24",
+      "creator": "LibreOffice",
+      "producer": "LibreOffice",
+      "earliest_year": 2024,
+      "family": "office"
+    },
+    {
+      "id": "ms_word_mac",
+      "creator": "Microsoft Word",
+      "producer": "Microsoft Word",
+      "earliest_year": 2019,
+      "family": "office"
+    },
+    {
+      "id": "ms_word_windows",
+      "creator": "Microsoft Word",
+      "producer": "Microsoft Word",
+      "earliest_year": 2019,
+      "family": "office"
+    },
+    {
+      "id": "apple_pages",
+      "creator": "Pages",
+      "producer": "macOS",
+      "earliest_year": 2019,
+      "family": "office"
+    },
+    {
+      "id": "google_docs_pdf",
+      "creator": "Google Docs",
+      "producer": "Skia/PDF",
+      "earliest_year": 2019,
+      "family": "cloud_export"
+    },
+    {
+      "id": "preview_macos",
+      "creator": "Preview",
+      "producer": "macOS Quartz PDFContext",
+      "earliest_year": 2019,
+      "family": "pdf"
+    },
+    {
+      "id": "adobe_acrobat",
+      "creator": "Adobe Acrobat",
+      "producer": "Adobe PDF Library",
+      "earliest_year": 2019,
+      "family": "pdf"
+    },
+    {
+      "id": "affinity_publisher",
+      "creator": "Affinity Publisher",
+      "producer": "PDFLib-compatible export",
+      "earliest_year": 2019,
+      "family": "design"
+    },
+    {
+      "id": "scribus",
+      "creator": "Scribus",
+      "producer": "Scribus PDF export",
+      "earliest_year": 2019,
+      "family": "design"
+    },
+    {
+      "id": "latex_pdftex",
+      "creator": "LaTeX",
+      "producer": "pdfTeX",
+      "earliest_year": 2015,
+      "family": "typesetting"
+    },
+    {
+      "id": "latex_luatex",
+      "creator": "LaTeX",
+      "producer": "LuaTeX",
+      "earliest_year": 2016,
+      "family": "typesetting"
+    }
+  ],
+  "image_software_profiles": [
+    {
+      "id": "adobe_lightroom",
+      "software": "Adobe Lightroom",
+      "earliest_year": 2019
+    },
+    {
+      "id": "adobe_photoshop",
+      "software": "Adobe Photoshop",
+      "earliest_year": 2019
+    },
+    {
+      "id": "affinity_photo",
+      "software": "Affinity Photo",
+      "earliest_year": 2019
+    },
+    {
+      "id": "gimp",
+      "software": "GIMP",
+      "earliest_year": 2019
+    },
+    {
+      "id": "pixelmator_pro",
+      "software": "Pixelmator Pro",
+      "earliest_year": 2019
+    },
+    {
+      "id": "apple_photos",
+      "software": "Photos",
+      "earliest_year": 2019
+    },
+    {
+      "id": "apple_preview",
+      "software": "Preview",
+      "earliest_year": 2019
+    },
+    {
+      "id": "imagemagick",
+      "software": "ImageMagick",
+      "earliest_year": 2019
+    }
+  ],
+  "video_software_profiles": [
+    {
+      "id": "apple_photos_video",
+      "software": "Apple Photos",
+      "encoder": "Apple",
+      "earliest_year": 2019
+    },
+    {
+      "id": "iphone_capture",
+      "software": "iOS Camera",
+      "encoder": "Apple",
+      "earliest_year": 2019
+    },
+    {
+      "id": "android_camera",
+      "software": "Android Camera",
+      "encoder": "Android",
+      "earliest_year": 2019
+    },
+    {
+      "id": "ffmpeg",
+      "software": "FFmpeg",
+      "encoder": "Lavf",
+      "earliest_year": 2015
+    },
+    {
+      "id": "handbrake",
+      "software": "HandBrake",
+      "encoder": "HandBrake",
+      "earliest_year": 2018
+    },
+    {
+      "id": "davinci_resolve",
+      "software": "DaVinci Resolve",
+      "encoder": "Blackmagic Design",
+      "earliest_year": 2019
+    },
+    {
+      "id": "adobe_premiere",
+      "software": "Adobe Premiere Pro",
+      "encoder": "Adobe Media Encoder",
+      "earliest_year": 2019
+    },
+    {
+      "id": "final_cut_pro",
+      "software": "Final Cut Pro",
+      "encoder": "Apple",
+      "earliest_year": 2019
+    },
+    {
+      "id": "vlc_transcode",
+      "software": "VLC media player",
+      "encoder": "VLC",
+      "earliest_year": 2019
+    }
+  ],
+  "audio_software_profiles": [
+    {
+      "id": "lame",
+      "software": "LAME",
+      "encoded_by": "LAME",
+      "earliest_year": 2010
+    },
+    {
+      "id": "ffmpeg_audio",
+      "software": "FFmpeg",
+      "encoded_by": "Lavf",
+      "earliest_year": 2015
+    },
+    {
+      "id": "audacity",
+      "software": "Audacity",
+      "encoded_by": "Audacity",
+      "earliest_year": 2019
+    },
+    {
+      "id": "garageband",
+      "software": "GarageBand",
+      "encoded_by": "Apple GarageBand",
+      "earliest_year": 2019
+    },
+    {
+      "id": "logic_pro",
+      "software": "Logic Pro",
+      "encoded_by": "Apple Logic Pro",
+      "earliest_year": 2019
+    },
+    {
+      "id": "reaper",
+      "software": "REAPER",
+      "encoded_by": "REAPER",
+      "earliest_year": 2019
+    }
+  ],
+  "archetypes": [
+    {
+      "id": "smartphone_photo",
+      "formats": [
+        "jpg",
+        "jpeg",
+        "heic"
+      ],
+      "requires": [
+        "camera_device:smartphone",
+        "timestamp"
+      ],
+      "optional": [
+        "location",
+        "image_software"
+      ],
+      "sparsity": {
+        "camera_identity": 0.95,
+        "software": 0.55,
+        "gps": 0.35,
+        "author": 0.03,
+        "serial": 0.02
+      },
+      "notes": "Sparse capture metadata. Author usually omitted."
+    },
+    {
+      "id": "mirrorless_photo",
+      "formats": [
+        "jpg",
+        "jpeg",
+        "tiff"
+      ],
+      "requires": [
+        "camera_device:mirrorless",
+        "timestamp"
+      ],
+      "optional": [
+        "location",
+        "image_software"
+      ],
+      "sparsity": {
+        "camera_identity": 0.98,
+        "lens": 0.65,
+        "software": 0.35,
+        "gps": 0.1,
+        "author": 0.04,
+        "serial": 0.03
+      },
+      "notes": "Camera/lens metadata may exist; serial remains off unless explicitly enabled."
+    },
+    {
+      "id": "edited_image_export",
+      "formats": [
+        "jpg",
+        "jpeg",
+        "png",
+        "tiff",
+        "webp"
+      ],
+      "requires": [
+        "image_software",
+        "timestamp"
+      ],
+      "optional": [
+        "persona"
+      ],
+      "sparsity": {
+        "software": 0.95,
+        "author": 0.25,
+        "gps": 0.02,
+        "camera_identity": 0.2
+      },
+      "notes": "Edited exports often lose part of original capture metadata."
+    },
+    {
+      "id": "office_pdf_export",
+      "formats": [
+        "pdf"
+      ],
+      "requires": [
+        "document_software",
+        "timestamp"
+      ],
+      "optional": [
+        "persona"
+      ],
+      "sparsity": {
+        "author": 0.65,
+        "creator": 0.95,
+        "producer": 0.95,
+        "dates": 0.9,
+        "title": 0.08
+      },
+      "notes": "Do not synthesize semantic Title/Subject/Keywords by default."
+    },
+    {
+      "id": "office_document",
+      "formats": [
+        "docx",
+        "odt"
+      ],
+      "requires": [
+        "document_software",
+        "timestamp"
+      ],
+      "optional": [
+        "persona"
+      ],
+      "sparsity": {
+        "author": 0.78,
+        "last_modified_by": 0.7,
+        "dates": 0.95,
+        "revision": 0.6
+      },
+      "notes": "Tier-2 writer; only enable after safe format adapter passes tests."
+    },
+    {
+      "id": "smartphone_video",
+      "formats": [
+        "mov",
+        "mp4"
+      ],
+      "requires": [
+        "camera_device:smartphone",
+        "video_software",
+        "timestamp"
+      ],
+      "optional": [
+        "location"
+      ],
+      "sparsity": {
+        "device": 0.85,
+        "software": 0.75,
+        "gps": 0.25,
+        "author": 0.02
+      },
+      "notes": "QuickTime/MP4 metadata varies by device and container."
+    },
+    {
+      "id": "edited_video_export",
+      "formats": [
+        "mov",
+        "mp4"
+      ],
+      "requires": [
+        "video_software",
+        "timestamp"
+      ],
+      "optional": [],
+      "sparsity": {
+        "encoder": 0.9,
+        "software": 0.9,
+        "gps": 0.01,
+        "author": 0.03
+      },
+      "notes": "Editor/encoder provenance, not camera provenance."
+    },
+    {
+      "id": "audio_export",
+      "formats": [
+        "mp3",
+        "m4a",
+        "flac",
+        "ogg"
+      ],
+      "requires": [
+        "audio_software",
+        "timestamp"
+      ],
+      "optional": [
+        "persona"
+      ],
+      "sparsity": {
+        "encoder": 0.85,
+        "author": 0.1,
+        "semantic_music_fields": 0.0
+      },
+      "notes": "Do not synthesize Artist/Album/Title/Composer by default."
+    }
+  ],
+  "format_recipes": {
+    "jpg": {
+      "support_tier": 1,
+      "writer": "exiftool",
+      "archetypes": [
+        "smartphone_photo",
+        "mirrorless_photo",
+        "edited_image_export"
+      ],
+      "candidate_groups": [
+        "IFD0",
+        "ExifIFD",
+        "GPS",
+        "XMP"
+      ],
+      "candidate_fields": [
+        "Make",
+        "Model",
+        "Software",
+        "DateTimeOriginal",
+        "CreateDate",
+        "ModifyDate",
+        "OffsetTimeOriginal",
+        "LensModel",
+        "GPSLatitude",
+        "GPSLongitude",
+        "GPSAltitude",
+        "XMP-dc:Creator",
+        "XMP-xmp:CreatorTool",
+        "XMP-xmp:CreateDate",
+        "XMP-xmp:ModifyDate"
+      ],
+      "never_default": [
+        "BodySerialNumber",
+        "SerialNumber",
+        "CameraOwnerName",
+        "Copyright",
+        "Title",
+        "Description",
+        "Keywords"
+      ]
+    },
+    "jpeg": {
+      "alias_of": "jpg"
+    },
+    "png": {
+      "support_tier": 1,
+      "writer": "exiftool",
+      "archetypes": [
+        "edited_image_export"
+      ],
+      "candidate_groups": [
+        "PNG",
+        "XMP"
+      ],
+      "candidate_fields": [
+        "PNG:Author",
+        "PNG:CreationTime",
+        "PNG:Software",
+        "PNG:Make",
+        "PNG:Model",
+        "XMP-dc:Creator",
+        "XMP-xmp:CreatorTool",
+        "XMP-xmp:CreateDate",
+        "XMP-xmp:ModifyDate"
+      ],
+      "never_default": [
+        "Title",
+        "Description",
+        "Comment",
+        "Copyright",
+        "Keywords"
+      ]
+    },
+    "heic": {
+      "support_tier": 1,
+      "writer": "exiftool",
+      "archetypes": [
+        "smartphone_photo"
+      ],
+      "candidate_groups": [
+        "EXIF",
+        "XMP",
+        "QuickTime"
+      ],
+      "candidate_fields": [
+        "Make",
+        "Model",
+        "Software",
+        "DateTimeOriginal",
+        "CreateDate",
+        "ModifyDate",
+        "GPSLatitude",
+        "GPSLongitude",
+        "XMP-xmp:CreatorTool"
+      ],
+      "never_default": [
+        "SerialNumber",
+        "Copyright",
+        "Title",
+        "Description"
+      ]
+    },
+    "tiff": {
+      "support_tier": 1,
+      "writer": "exiftool",
+      "archetypes": [
+        "mirrorless_photo",
+        "edited_image_export"
+      ],
+      "candidate_groups": [
+        "IFD0",
+        "ExifIFD",
+        "GPS",
+        "XMP"
+      ],
+      "candidate_fields": [
+        "Make",
+        "Model",
+        "Software",
+        "DateTimeOriginal",
+        "CreateDate",
+        "ModifyDate",
+        "LensModel",
+        "GPSLatitude",
+        "GPSLongitude",
+        "XMP-xmp:CreatorTool"
+      ],
+      "never_default": [
+        "SerialNumber",
+        "Copyright",
+        "Title",
+        "Description"
+      ]
+    },
+    "webp": {
+      "support_tier": 1,
+      "writer": "exiftool",
+      "archetypes": [
+        "edited_image_export"
+      ],
+      "candidate_groups": [
+        "EXIF",
+        "XMP"
+      ],
+      "candidate_fields": [
+        "Software",
+        "CreateDate",
+        "ModifyDate",
+        "XMP-dc:Creator",
+        "XMP-xmp:CreatorTool"
+      ],
+      "never_default": [
+        "Copyright",
+        "Title",
+        "Description"
+      ]
+    },
+    "pdf": {
+      "support_tier": 1,
+      "writer": "exiftool_after_mat2_clean_only",
+      "archetypes": [
+        "office_pdf_export"
+      ],
+      "candidate_groups": [
+        "PDF",
+        "XMP"
+      ],
+      "candidate_fields": [
+        "PDF:Author",
+        "PDF:Creator",
+        "PDF:Producer",
+        "PDF:CreateDate",
+        "PDF:ModifyDate",
+        "XMP-dc:Creator",
+        "XMP-xmp:CreatorTool",
+        "XMP-xmp:CreateDate",
+        "XMP-xmp:ModifyDate",
+        "XMP-xmpMM:DocumentID",
+        "XMP-xmpMM:InstanceID"
+      ],
+      "never_default": [
+        "PDF:Title",
+        "PDF:Subject",
+        "PDF:Keywords",
+        "XMP-dc:Title",
+        "XMP-dc:Description"
+      ],
+      "special_note": "ExifTool writes PDF incrementally; therefore apply only to a MAT2-cleaned output, never directly to the original."
+    },
+    "mov": {
+      "support_tier": 1,
+      "writer": "exiftool",
+      "archetypes": [
+        "smartphone_video",
+        "edited_video_export"
+      ],
+      "candidate_groups": [
+        "QuickTime",
+        "XMP"
+      ],
+      "candidate_fields": [
+        "QuickTime:CreationDate",
+        "QuickTime:Author",
+        "QuickTime:Encoder",
+        "QuickTime:GPSCoordinates",
+        "QuickTime:LocationName",
+        "XMP-xmp:CreateDate",
+        "XMP-xmp:ModifyDate",
+        "XMP-xmp:CreatorTool"
+      ],
+      "never_default": [
+        "Title",
+        "Description",
+        "Copyright"
+      ]
+    },
+    "mp4": {
+      "alias_of": "mov"
+    },
+    "mp3": {
+      "support_tier": 2,
+      "writer": "mutagen_preferred_exiftool_read_only_for_id3",
+      "archetypes": [
+        "audio_export"
+      ],
+      "candidate_fields": [
+        "TENC/EncodedBy",
+        "TSSE/EncoderSettings",
+        "TDRC/RecordingTime",
+        "TDTG/TaggingTime"
+      ],
+      "never_default": [
+        "TIT2/Title",
+        "TPE1/Artist",
+        "TALB/Album",
+        "TCOM/Composer",
+        "TCOP/Copyright"
+      ],
+      "special_note": "ExifTool's ID3 table reports these standard frames as non-writable; use the existing MAT2 runtime's Mutagen dependency if implementing synthetic ID3."
+    },
+    "m4a": {
+      "support_tier": 2,
+      "writer": "mutagen_or_exiftool_after_format_tests",
+      "archetypes": [
+        "audio_export"
+      ],
+      "candidate_fields": [
+        "encoder",
+        "creation_time",
+        "XMP-xmp:CreatorTool",
+        "XMP-xmp:CreateDate"
+      ],
+      "never_default": [
+        "Title",
+        "Artist",
+        "Album",
+        "Copyright"
+      ]
+    },
+    "flac": {
+      "support_tier": 2,
+      "writer": "mutagen",
+      "archetypes": [
+        "audio_export"
+      ],
+      "candidate_fields": [
+        "ENCODER",
+        "DATE"
+      ],
+      "never_default": [
+        "TITLE",
+        "ARTIST",
+        "ALBUM",
+        "COMPOSER",
+        "COPYRIGHT"
+      ]
+    },
+    "ogg": {
+      "support_tier": 2,
+      "writer": "mutagen",
+      "archetypes": [
+        "audio_export"
+      ],
+      "candidate_fields": [
+        "ENCODER",
+        "DATE"
+      ],
+      "never_default": [
+        "TITLE",
+        "ARTIST",
+        "ALBUM",
+        "COMPOSER",
+        "COPYRIGHT"
+      ]
+    },
+    "docx": {
+      "support_tier": 2,
+      "writer": "safe_ooxml_core_properties_adapter",
+      "archetypes": [
+        "office_document"
+      ],
+      "candidate_fields": [
+        "dc:creator",
+        "cp:lastModifiedBy",
+        "dcterms:created",
+        "dcterms:modified",
+        "cp:revision"
+      ],
+      "never_default": [
+        "dc:title",
+        "dc:subject",
+        "cp:keywords",
+        "dc:description"
+      ],
+      "special_note": "Implement by rewriting docProps/core.xml in a fresh archive without extracting untrusted paths; do not add a broad Office parser."
+    },
+    "odt": {
+      "support_tier": 3,
+      "writer": "deferred",
+      "archetypes": [
+        "office_document"
+      ],
+      "candidate_fields": [
+        "meta:initial-creator",
+        "dc:creator",
+        "meta:creation-date",
+        "dc:date",
+        "meta:generator"
+      ],
+      "never_default": [
+        "dc:title",
+        "dc:subject",
+        "meta:keyword"
+      ],
+      "special_note": "Database supports logical profile, but enable only after a safe ODF adapter is separately reviewed."
+    }
+  },
+  "consistency_checks": [
+    {
+      "id": "date_after_device_release",
+      "severity": "error",
+      "rule": "capture/create year must be >= selected device earliest_plausible_year"
+    },
+    {
+      "id": "date_order",
+      "severity": "error",
+      "rule": "create/capture must not be later than modify when both are present"
+    },
+    {
+      "id": "same_locale_persona",
+      "severity": "error",
+      "rule": "given name and surname must come from same selected locale pool"
+    },
+    {
+      "id": "location_timezone_match",
+      "severity": "warning",
+      "rule": "if GPS/location and offset/timezone are both emitted, use selected location timezone"
+    },
+    {
+      "id": "camera_dimensions_plausible",
+      "severity": "warning",
+      "rule": "if image dimensions are being synthesized rather than preserved, use a dimension family listed for selected device; default is preserve actual dimensions"
+    },
+    {
+      "id": "no_real_identifiers",
+      "severity": "error",
+      "rule": "never reuse source serials, UUIDs, document IDs, email addresses, phone numbers or owner IDs"
+    },
+    {
+      "id": "semantic_fields_off",
+      "severity": "error",
+      "rule": "title/subject/keywords/artist/album/composer/copyright remain untouched/absent unless a future explicit editorial feature is approved"
+    },
+    {
+      "id": "clean_before_spoof",
+      "severity": "error",
+      "rule": "synthetic writer may only receive a MAT2-cleaned staged output, never the original path"
+    },
+    {
+      "id": "post_write_verify",
+      "severity": "error",
+      "rule": "re-read output and confirm original sensitive values are absent and expected synthetic fields match generated profile"
+    },
+    {
+      "id": "profile_provenance_internal_only",
+      "severity": "error",
+      "rule": "profile seed/ID must not be embedded into the exported file"
+    }
+  ],
+  "source_notes": [
+    {
+      "name": "ExifTool TagNames",
+      "url": "https://exiftool.org/TagNames/",
+      "use": "writability and tag-family reference"
+    },
+    {
+      "name": "ExifTool PDF tags",
+      "url": "https://exiftool.org/TagNames/PDF.html",
+      "use": "PDF Info/XMP writable tags and incremental-update caveat"
+    },
+    {
+      "name": "ExifTool PNG tags",
+      "url": "https://exiftool.org/TagNames/PNG.html",
+      "use": "PNG textual tag writability"
+    },
+    {
+      "name": "ExifTool QuickTime tags",
+      "url": "https://exiftool.org/TagNames/QuickTime.html",
+      "use": "MOV/MP4 metadata families and writable keys"
+    },
+    {
+      "name": "ExifTool XMP tags",
+      "url": "https://exiftool.org/TagNames/XMP.html",
+      "use": "cross-format XMP fields"
+    },
+    {
+      "name": "CIPA Exif standards",
+      "url": "https://www.cipa.jp/e/std/std-sec.html",
+      "use": "Exif tag semantics and current standard references"
+    },
+    {
+      "name": "ID3.org",
+      "url": "https://id3.org/id3v2.4.0-frames",
+      "use": "ID3 frame semantics"
+    },
+    {
+      "name": "DMS prior art",
+      "url": "https://github.com/davvikq/deceptive-metadata-shredder",
+      "use": "offline spoofing workflow prior art; not trusted engine"
+    }
+  ]
+}
