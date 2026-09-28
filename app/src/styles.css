@@ -1071,3 +1071,93 @@ td.synth-value {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ---------- Update onboarding + update result dialog ---------- */
+
+#update-onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 110;
+}
+
+#update-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+#update-onboarding-box,
+#update-dialog-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  max-width: 440px;
+  width: calc(100% - 60px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+#update-onboarding-title,
+#update-dialog-title {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.onboard-copy {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.onboard-choice {
+  font-size: 12px;
+  color: var(--text);
+}
+
+#onboarding-privacy-title {
+  margin: 10px 0 2px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+#onboarding-privacy,
+#onboarding-frequency-hint,
+#update-privacy-note {
+  margin-left: 0;
+}
+
+#onboarding-buttons,
+#update-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+#update-dialog-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-line;
+  user-select: text;
+}
+
+#update-frequency:disabled,
+#onboarding-frequency:disabled {
+  opacity: 0.5;
+}
+
+#update-actions {
+  margin: 6px 0 2px 0;
+}

@@ -37,6 +37,11 @@ ALLOWED=(
   mat2_formats
   mat2_check_dependencies
   mat2_help
+  update_settings_get
+  update_settings_set
+  update_check_now
+  update_auto_check_if_due
+  open_update_release
 )
 
 FORBIDDEN_NAMES='(^|[^a-z_])(exec|shell|spawn_command|read_file|write_file|delete_file|remove_file_at|open_url|open_path|open_arbitrary|eval|run_command|system)([^a-z_]|$)'

@@ -64,6 +64,22 @@ pub fn open_canary_audit() -> Result<(), String> {
     open_approved_url(CANARY_AUDIT_URL)
 }
 
+/// Opens the official metadata'nt release page. The URL is constructed in
+/// updates.rs from a strictly validated release tag (git-ref charset only,
+/// bounded length); this function re-checks the no-query/no-fragment rule
+/// before handing it to the platform opener. It is the ONLY dynamic-URL open
+/// path in the application and it can only ever reach
+/// github.com/ParamoStudio/metadata-nt/releases/tag/<validated-tag>.
+pub(crate) fn open_release_page(url: &str) -> Result<(), String> {
+    if !url.starts_with("https://github.com/ParamoStudio/metadata-nt/releases/tag/") {
+        return Err("release page URL is not the official repository release page".into());
+    }
+    if url.contains('?') || url.contains('#') {
+        return Err("release URLs must carry no query or fragment".into());
+    }
+    platform_open(&[url])
+}
+
 /// Compute the unique parent directories of committed outputs (order kept).
 /// Pure logic, unit-tested; reveal_output in lib.rs feeds it only paths that
 /// the job pipeline itself recorded.

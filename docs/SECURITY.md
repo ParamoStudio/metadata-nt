@@ -25,10 +25,17 @@ Nothing else is granted. In particular:
 - **No generic opener** — the three external links become dedicated Rust
   commands with hard-coded URL constants (Task 14); `open_url(url)` /
   `open_path(path)` never exist.
-- **No HTTP plugin, no updater, no telemetry.** Cleaning, inspection and
-  synthetic metadata processing are fully local. The only intentional network
-  path is the optional Investigation Tripwire (below) — a Rust-side client
-  hard-coded to the Canarytokens.org origin, activated explicitly by the user.
+- **No HTTP plugin, no auto-updater, no telemetry.** Cleaning, inspection and
+  synthetic metadata processing are fully local. There are exactly two
+  intentional network paths, both Rust-side and both explicit: the optional
+  Investigation Tripwire (Canarytokens.org, below) and the optional GitHub
+  release checker (`updates.rs`, below). All file inspection, cleaning and
+  synthetic metadata processing remain local. If enabled by the user,
+  metadata'nt may contact GitHub to check for new application releases. This
+  reveals the user's IP address to GitHub but sends no files, document
+  metadata, machine identifier or usage analytics. Investigation Tripwire
+  contacts Canarytokens.org only when explicitly enabled for that feature.
+  Nothing is ever downloaded or installed automatically.
 - `tauri-plugin-log` (present in the scaffold template) was **removed** in
   Task 2: logs are in-memory only (HANDOFF §18); no persistent log files that
   could retain sensitive filenames.
@@ -42,7 +49,7 @@ Nothing else is granted. In particular:
 | `time` (0.3, local-offset/formatting/macros) | `YYYY-MM-DD_HHmmss` output-directory timestamps in local time; pure-Rust, no network/parser surface, replaces hand-rolled civil-calendar code | None |
 | `sha2` (0.10) | SHA-256 checksums proving "source unchanged" and "staging byte-identical" invariants (Task 8 tests + QA protocol); RustCrypto, pure Rust, no network | None |
 | `libc` (0.2, unix only) | Process-group signalling (`kill(-pgid, SIGTERM/SIGKILL)`) for controlled cancellation of MAT2 children, which internally spawn ProcessPoolExecutor workers; already an indirect dependency of the Rust std/tauri tree — no new supply chain | None |
-| `ureq` (2.x, rustls) | Investigation Tripwire: create a Fast Redirect canary at the hard-coded Canarytokens.org origin (spec §16–17: HTTPS-only, normal cert validation, 12s timeout, 64KB response bound, 0 redirects, no cookies, POST-only, no retry loop). std has no HTTP/TLS; ureq is the minimal maintained blocking client (no async runtime). Pulls rustls/webpki (allow-listed by cargo-deny) | None — Rust-side only; no HTTP IPC command exists; WebView keeps zero network capability |
+| `ureq` (2.x, rustls) | Investigation Tripwire: create a Fast Redirect canary at the hard-coded Canarytokens.org origin (spec §16–17: HTTPS-only, normal cert validation, 12s timeout, 64KB response bound, 0 redirects, no cookies, POST-only, no retry loop); and the opt-in GitHub release checker (`updates.rs`: HTTPS-only GET to the hard-coded `api.github.com` releases endpoint, normal cert validation, 8s timeout, 256KB response bound, no cookies, no auth token, static User-Agent, optional stored ETag). std has no HTTP/TLS; ureq is the minimal maintained blocking client (no async runtime). Pulls rustls/webpki (allow-listed by cargo-deny) | None — Rust-side only; no generic HTTP IPC command exists; WebView keeps zero network capability |
 
 Registry policy (selection.rs, covered by unit tests): frontend-supplied data is
 only ever opaque IDs; unknown IDs resolve to nothing; duplicates dedupe by
@@ -78,7 +85,7 @@ seed, display data only, extension validated `[a-z0-9]{1..8}`),
 `synthetic_pack_info` (diagnostics). No new Tauri permissions; capability set
 unchanged (`core:event:default` only).
 
-### Investigation Tripwire (owner-approved; the ONLY intentional network path)
+### Investigation Tripwire (owner-approved; intentional network path 1 of 2)
 
 Sub-feature of Synthetic Metadata (hidden/disabled when synthetic is OFF;
 can never run in in-place mode). Mints a Canarytokens.org **Fast Redirect**
@@ -104,6 +111,32 @@ Commands added (allow-list 25 total): `open_canarytokens_site`,
 constant mechanism as the original three (now 7 approved URLs; the
 exactly-seven test guards the set).
 
+### GitHub update checker (owner-approved; intentional network path 2 of 2)
+
+Release checker only — no download, no installation, no Sparkle/updater
+framework, no background daemon, no polling timer. Checks
+`ParamoStudio/metadata-nt` stable releases via the hard-coded GitHub Releases
+API; the bundled MAT2 runtime is never updated independently.
+
+| Property | Enforcement | Verified by |
+|---|---|---|
+| Hard-coded endpoint | `RELEASES_ENDPOINT` constant (`api.github.com/repos/ParamoStudio/metadata-nt/releases/latest`); no URL/repository parameter exists in any command | `request_headers_carry_no_identifiers`, IPC surface lint |
+| Request minimization | static User-Agent `metadata-nt-update-checker`, Accept header, optional stored ETag only; no cookies, no auth token, no machine/installation identifier, no hostname, no username, no file or document data | `request_headers_carry_no_identifiers` |
+| Consent-gated automatic checks | first-run onboarding requires an explicit choice (dismissing ≠ consent); automatic checks run only at launch and only when the user-selected interval (1/7/30 days, default 7) has elapsed; manual checks are always explicit | `scheduling_interval_logic`, frontend onboarding gate, QA protocol |
+| Silent failure policy | automatic check: no-update and network failure produce no UI; manual check always reports (up to date / could not check / update available) | frontend result dialog routing, QA protocol |
+| Stable releases only | drafts, prereleases, malformed and non-semver tags rejected; numeric semantic comparison (0.10.0 > 0.9.0), never lexicographic | `release_filtering_rules`, `semantic_not_lexicographic_comparison`, `parses_normal_tags_only` |
+| No auto-download/install | the check returns display data only; `View Release` opens the official release page constructed locally from a strictly validated tag via `external::open_release_page` (official-prefix + no-query/fragment re-check) | `release_page_url_validation`, `open_release_page` guard |
+| ETag conditional requests | ETag stored only when the outcome needs no action, so `304 Not Modified` can only mean "still current"; failures never consume the interval | `etag_only_stored_when_no_action_needed` |
+| Local state | one JSON file in the app config dir holding exactly: `onboarding_completed`, `automatic_update_checks_enabled`, `update_check_interval_days`, `last_update_check_at`, `optional_github_etag`; no unique identifier, no telemetry, no update history | `settings_roundtrip_and_interval_sanitization` |
+| Tripwire isolation | separate module, separate origin, separate user action; no shared data, no request chaining | module boundaries + this table |
+
+Commands added (allow-list 30 total): `update_settings_get`,
+`update_settings_set`, `update_check_now`, `update_auto_check_if_due`,
+`open_update_release`. No new Tauri permissions; CSP unchanged (networking
+stays Rust-side; `connect-src` remains IPC-only). The native macOS app menu
+gains `Check for Updates…` and `Settings…`; both emit events handled by the
+same frontend flows as the Settings UI — no duplicate update implementation.
+
 ### Task 14 decision: external links & Reveal without the opener plugin
 
 `external.rs` opens the three hard-coded URLs and the job's committed output
@@ -113,7 +146,7 @@ the WebView has no URL-opening or path-opening permission at all; it invokes
 only `open_mat2_site` / `open_dangerzone_site` / `open_privacytools_site` /
 `reveal_output(job_id)`. Defense in depth: `open_approved_url` re-validates the
 URL against the compile-time allow-list and rejects query/fragment; unit tests
-assert exactly three URL constant declarations exist in the source and that
+assert exactly seven URL constant declarations exist in the source and that
 unapproved URLs are rejected without spawning. `reveal_output` resolves only
 paths the job pipeline itself recorded, keyed by matching job id — unknown ids
 error out.
@@ -135,9 +168,11 @@ error out.
 
 `scripts/check-no-remote-refs.sh` (npm: `lint:no-remote`) fails the build if any
 `http(s)://` or `ws(s)://` reference appears in app source, except the allow-list:
-the two local dev/IPC origins in `tauri.conf.json` and the three hard-coded
-external-link constants in `app/src-tauri/src/external.rs` (Task 14). Docs and
-scripts directories are out of scope by design.
+the two local dev/IPC origins in `tauri.conf.json`, the hard-coded
+external-link constants and the validated release-page prefix in
+`app/src-tauri/src/external.rs` (Task 14 + update checker), the Canarytokens
+origin in `tripwire.rs`, and the GitHub releases endpoint plus release-page
+prefix in `updates.rs`. Docs and scripts directories are out of scope by design.
 
 ## Process-creation policy
 

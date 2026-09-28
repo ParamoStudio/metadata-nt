@@ -17,6 +17,8 @@ import type {
   PublicSelectedFile,
   SyntheticOptions,
   TripwireOptions,
+  UpdateCheckResultDto,
+  UpdateSettingsDto,
 } from "./types";
 
 interface UiState {
@@ -55,6 +57,8 @@ const MAX_LOG_LINES = 500;
 // reset on every launch because nothing is stored).
 let tripwireDisclosedThisSession = false;
 let tripwireConfirmed = false;
+
+let pendingUpdateTag: string | null = null;
 
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -267,6 +271,7 @@ function setJobRunning(running: boolean): void {
     "btn-synth-preview",
     "btn-tripwire-enable",
     "btn-tripwire-cancel",
+    "btn-update-check-now",
     "diag-version",
     "diag-formats",
     "diag-deps",
@@ -670,6 +675,137 @@ function closeAdvanced(): void {
   advancedReturnFocus = null;
 }
 
+function formatLastChecked(sec: number | null): string {
+  if (sec === null) return "Last checked: never";
+  return `Last checked: ${new Date(sec * 1000).toLocaleString()}`;
+}
+
+function applyUpdateSettingsToUi(s: UpdateSettingsDto): void {
+  const auto = inputEl("opt-auto-updates");
+  if (auto) auto.checked = s.automaticUpdateChecksEnabled;
+  const freq = el("update-frequency") as HTMLSelectElement | null;
+  if (freq) {
+    freq.value = String(s.updateCheckIntervalDays);
+    freq.disabled = !s.automaticUpdateChecksEnabled;
+  }
+  const last = el("update-last-checked");
+  if (last) last.textContent = formatLastChecked(s.lastUpdateCheckAt);
+}
+
+function showUpdateDialog(
+  kind: "current" | "failed" | "update",
+  text: string,
+  tag: string | null,
+): void {
+  const title =
+    kind === "update"
+      ? "Update available"
+      : kind === "current"
+        ? "metadata'nt is up to date"
+        : "Could not check for updates";
+  mustEl("update-dialog-title").textContent = title;
+  mustEl("update-dialog-text").textContent = text;
+  const isUpdate = kind === "update";
+  mustEl("update-dialog-ok").classList.toggle("hidden", isUpdate);
+  mustEl("update-dialog-later").classList.toggle("hidden", !isUpdate);
+  mustEl("update-dialog-view").classList.toggle("hidden", !isUpdate);
+  pendingUpdateTag = tag;
+  mustEl("update-dialog-overlay").classList.remove("hidden");
+  (el(isUpdate ? "update-dialog-later" : "update-dialog-ok") as HTMLButtonElement | null)?.focus();
+}
+
+function closeUpdateDialog(): void {
+  mustEl("update-dialog-overlay").classList.add("hidden");
+  pendingUpdateTag = null;
+}
+
+function handleUpdateResult(result: UpdateCheckResultDto, automatic: boolean): void {
+  if (result === "current") {
+    if (!automatic) {
+      showUpdateDialog("current", "You are running the latest stable release.", null);
+    }
+    return;
+  }
+  if (result === "failed") {
+    if (!automatic) {
+      showUpdateDialog(
+        "failed",
+        "metadata'nt could not reach GitHub.\nNo application functionality is affected.",
+        null,
+      );
+    }
+    return;
+  }
+  const info = result.updateAvailable;
+  showUpdateDialog(
+    "update",
+    `metadata'nt ${info.version} is available.\nYou are running ${info.current}.`,
+    info.tag,
+  );
+}
+
+async function runManualUpdateCheck(): Promise<void> {
+  try {
+    const result = await ipc.updateCheckNow();
+    applyUpdateSettingsToUi(await ipc.updateSettingsGet());
+    handleUpdateResult(result, false);
+  } catch (err) {
+    logError("manual update check", err);
+    showUpdateDialog(
+      "failed",
+      "metadata'nt could not reach GitHub.\nNo application functionality is affected.",
+      null,
+    );
+  }
+}
+
+async function saveOnboardingChoice(): Promise<void> {
+  const choice = document.querySelector<HTMLInputElement>(
+    'input[name="update-choice"]:checked',
+  )?.value;
+  if (choice !== "auto" && choice !== "never") return;
+  const freq = el("onboarding-frequency") as HTMLSelectElement | null;
+  const days = Number(freq?.value ?? "7");
+  try {
+    const saved = await ipc.updateSettingsSet({
+      onboardingCompleted: true,
+      automatic: choice === "auto",
+      intervalDays: days,
+    });
+    applyUpdateSettingsToUi(saved);
+    mustEl("update-onboarding-overlay").classList.add("hidden");
+    logInfo(
+      choice === "auto"
+        ? `Automatic update checks enabled (every ${days} days).`
+        : "Automatic update checks disabled by first-run choice.",
+    );
+    if (choice === "auto") {
+      const result = await ipc.updateAutoCheckIfDue();
+      if (result) handleUpdateResult(result, true);
+    }
+  } catch (err) {
+    logError("save onboarding choice", err);
+  }
+}
+
+async function initUpdates(): Promise<void> {
+  try {
+    const settings = await ipc.updateSettingsGet();
+    applyUpdateSettingsToUi(settings);
+    if (!settings.onboardingCompleted) {
+      mustEl("update-onboarding-overlay").classList.remove("hidden");
+      return;
+    }
+    if (settings.automaticUpdateChecksEnabled) {
+      const result = await ipc.updateAutoCheckIfDue();
+      if (result) handleUpdateResult(result, true);
+      applyUpdateSettingsToUi(await ipc.updateSettingsGet());
+    }
+  } catch (err) {
+    logError("update initialization", err);
+  }
+}
+
 function updateOutputLock(): void {
   const inplaceOn = inputEl("opt-inplace")?.checked === true;
   const fieldset = mustEl("output-mode") as HTMLFieldSetElement;
@@ -989,12 +1125,17 @@ function boot(): void {
   bind("advanced-close", closeAdvanced);
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    if (!mustEl("update-onboarding-overlay").classList.contains("hidden")) return;
     if (!mustEl("confirm-overlay").classList.contains("hidden")) {
       closeConfirm(false);
       return;
     }
     if (!mustEl("tripwire-info-overlay").classList.contains("hidden")) {
       mustEl("tripwire-info-overlay").classList.add("hidden");
+      return;
+    }
+    if (!mustEl("update-dialog-overlay").classList.contains("hidden")) {
+      closeUpdateDialog();
       return;
     }
     if (!mustEl("advanced-overlay").classList.contains("hidden")) {
@@ -1095,6 +1236,54 @@ function boot(): void {
   }
   updateOutputCards();
 
+  for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="update-choice"]')) {
+    radio.addEventListener("change", () => {
+      const never =
+        document.querySelector<HTMLInputElement>('input[name="update-choice"]:checked')?.value ===
+        "never";
+      const freq = el("onboarding-frequency") as HTMLSelectElement | null;
+      if (freq) freq.disabled = never;
+      const cont = el("btn-onboarding-continue") as HTMLButtonElement | null;
+      if (cont) cont.disabled = false;
+    });
+  }
+  bind("btn-onboarding-continue", () => void saveOnboardingChoice());
+
+  const autoUpdatesBox = inputEl("opt-auto-updates");
+  autoUpdatesBox?.addEventListener("change", () => {
+    void ipc
+      .updateSettingsSet({ automatic: autoUpdatesBox.checked })
+      .then((s) => {
+        applyUpdateSettingsToUi(s);
+        logInfo(
+          autoUpdatesBox.checked
+            ? "Automatic update checks enabled."
+            : "Automatic update checks disabled.",
+        );
+      })
+      .catch((e) => logError("set automatic update checks", e));
+  });
+  const updateFreq = el("update-frequency") as HTMLSelectElement | null;
+  updateFreq?.addEventListener("change", () => {
+    void ipc
+      .updateSettingsSet({ intervalDays: Number(updateFreq.value) })
+      .then((s) => applyUpdateSettingsToUi(s))
+      .catch((e) => logError("set update interval", e));
+  });
+  bind("btn-update-check-now", () => void runManualUpdateCheck());
+  bind("update-dialog-ok", closeUpdateDialog);
+  bind("update-dialog-later", () => {
+    logInfo("Update available: deferred by user.");
+    closeUpdateDialog();
+  });
+  bind("update-dialog-view", () => {
+    const tag = pendingUpdateTag;
+    closeUpdateDialog();
+    if (tag) ipc.openUpdateRelease(tag).catch((e) => logError("open release page", e));
+  });
+  void ipc.onMenuCheckUpdates(() => void runManualUpdateCheck());
+  void ipc.onMenuOpenSettings(() => openAdvanced());
+
   const dropZone = mustEl("drop-zone");
   dropZone.addEventListener("click", () => ipc.selectFiles().catch((e) => logError("select files", e)));
   dropZone.addEventListener("keydown", (e) => {
@@ -1151,6 +1340,7 @@ function boot(): void {
 
   logInfo("metadata'nt UI ready. Files stay on this device.");
   void refresh();
+  void initUpdates();
 }
 
 document.addEventListener("DOMContentLoaded", boot);

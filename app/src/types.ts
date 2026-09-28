@@ -182,3 +182,17 @@ export interface DiagnosticsDto {
   error: string | null;
   app_version: string;
 }
+
+/** Result of `update_settings_get` / `update_settings_set` (Rust UpdateSettings). */
+export interface UpdateSettingsDto {
+  onboardingCompleted: boolean;
+  automaticUpdateChecksEnabled: boolean;
+  updateCheckIntervalDays: number;
+  lastUpdateCheckAt: number | null;
+}
+
+/** Result of `update_check_now` / `update_auto_check_if_due` (Rust UpdateCheckResult). */
+export type UpdateCheckResultDto =
+  | "current"
+  | "failed"
+  | { updateAvailable: { version: string; tag: string; current: string } };

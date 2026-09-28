@@ -90,6 +90,9 @@ VIOLATIONS="$(grep -E '(https?|wss?)://' "${SCAN_LIST}" 2>/dev/null \
   | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://github\.com/thinkst/canarytokens"' \
   | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://resources\.canary\.tools/documents/Doyensec_ThinkstCanaryTokensOSS_Report_Q22024_WithRetesting\.pdf"' \
   | grep -vE 'src-tauri/src/tripwire\.rs:[0-9]+:.*https://canarytokens\.org' \
+  | grep -vE 'src-tauri/src/updates\.rs:[0-9]+:.*https://api\.github\.com/repos/ParamoStudio/metadata-nt/releases/latest' \
+  | grep -vE 'src-tauri/src/updates\.rs:[0-9]+:.*https://github\.com/ParamoStudio/metadata-nt/releases/tag/' \
+  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://github\.com/ParamoStudio/metadata-nt/releases/tag/' \
   | grep -vE 'https://archive\.org/' \
   | grep -vE 'https://"' \
   | grep -vE 'https:// ' \

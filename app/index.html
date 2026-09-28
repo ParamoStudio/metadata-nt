@@ -302,6 +302,32 @@
                   <button id="diag-help" type="button">Show MAT2 help</button>
                 </div>
               </section>
+
+              <section class="adv-group">
+                <span class="adv-group-head">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                  <h4>Updates</h4>
+                </span>
+                <label>
+                  <input type="checkbox" id="opt-auto-updates" />
+                  Automatically check for updates
+                </label>
+                <label for="update-frequency">Frequency</label>
+                <select id="update-frequency">
+                  <option value="1">Every day</option>
+                  <option value="7" selected>Every 7 days — recommended</option>
+                  <option value="30">Every 30 days</option>
+                </select>
+                <p class="helper" id="update-last-checked">Last checked: never</p>
+                <div id="update-actions">
+                  <button id="btn-update-check-now" type="button">Check for Updates Now</button>
+                </div>
+                <p class="helper" id="update-privacy-note">
+                  Update checks contact GitHub and reveal your IP address to
+                  GitHub. No files, document metadata, machine identifier or
+                  usage data are sent.
+                </p>
+              </section>
             </div>
           </div>
         </div>
@@ -356,6 +382,56 @@
           </div>
           <div id="confirm-buttons">
             <button id="tw-info-close" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="update-dialog-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title">
+        <div id="update-dialog-box">
+          <h3 id="update-dialog-title"></h3>
+          <p id="update-dialog-text"></p>
+          <div id="update-dialog-buttons">
+            <button id="update-dialog-later" type="button" class="hidden">Later</button>
+            <button id="update-dialog-view" type="button" class="hidden">View Release</button>
+            <button id="update-dialog-ok" type="button">OK</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- First-run update-privacy onboarding. Deliberately has no close
+           control: dismissing it must never imply consent, so it stays until
+           an explicit choice is saved. -->
+      <div id="update-onboarding-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="update-onboarding-title">
+        <div id="update-onboarding-box">
+          <h3 id="update-onboarding-title">Keep metadata'nt up to date?</h3>
+          <p class="onboard-copy">
+            metadata'nt can periodically check its official GitHub repository
+            for new security and compatibility releases.
+          </p>
+          <p class="onboard-copy">Choose how update checks should work:</p>
+          <label class="onboard-choice">
+            <input type="radio" name="update-choice" value="auto" />
+            Check automatically
+          </label>
+          <label class="onboard-choice">
+            <input type="radio" name="update-choice" value="never" />
+            Never check automatically
+          </label>
+          <label for="onboarding-frequency">Frequency</label>
+          <select id="onboarding-frequency">
+            <option value="1">Every day</option>
+            <option value="7" selected>Every 7 days — recommended</option>
+            <option value="30">Every 30 days</option>
+          </select>
+          <p class="helper" id="onboarding-frequency-hint">Recommended: every 7 days</p>
+          <h4 id="onboarding-privacy-title">Privacy</h4>
+          <p class="helper" id="onboarding-privacy">
+            Checking for updates contacts GitHub and reveals your IP address to
+            GitHub. No files, document metadata, machine identifier or usage
+            data are sent.
+          </p>
+          <div id="onboarding-buttons">
+            <button id="btn-onboarding-continue" type="button" disabled>Continue</button>
           </div>
         </div>
       </div>

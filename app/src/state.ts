@@ -21,6 +21,8 @@ import type {
   SyntheticOptions,
   SyntheticPackInfo,
   SyntheticPreview,
+  UpdateCheckResultDto,
+  UpdateSettingsDto,
 } from "./types";
 
 export function runtimeDiagnostics(): Promise<DiagnosticsDto> {
@@ -155,4 +157,36 @@ export function onDragEnter(cb: () => void): Promise<UnlistenFn> {
 
 export function onDragLeave(cb: () => void): Promise<UnlistenFn> {
   return listen("drag-leave", cb);
+}
+
+export function updateSettingsGet(): Promise<UpdateSettingsDto> {
+  return invoke<UpdateSettingsDto>("update_settings_get");
+}
+
+export function updateSettingsSet(patch: {
+  onboardingCompleted?: boolean;
+  automatic?: boolean;
+  intervalDays?: number;
+}): Promise<UpdateSettingsDto> {
+  return invoke<UpdateSettingsDto>("update_settings_set", patch);
+}
+
+export function updateCheckNow(): Promise<UpdateCheckResultDto> {
+  return invoke<UpdateCheckResultDto>("update_check_now");
+}
+
+export function updateAutoCheckIfDue(): Promise<UpdateCheckResultDto | null> {
+  return invoke<UpdateCheckResultDto | null>("update_auto_check_if_due");
+}
+
+export function openUpdateRelease(tag: string): Promise<void> {
+  return invoke("open_update_release", { tag });
+}
+
+export function onMenuCheckUpdates(cb: () => void): Promise<UnlistenFn> {
+  return listen("menu-check-updates", cb);
+}
+
+export function onMenuOpenSettings(cb: () => void): Promise<UnlistenFn> {
+  return listen("menu-open-settings", cb);
 }

@@ -15,6 +15,7 @@ mod output;
 mod selection;
 mod synthetic;
 mod tripwire;
+mod updates;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -557,6 +558,93 @@ fn mat2_help(app: AppHandle) -> Result<String, String> {
     diagnostic_output(&app, |rt| rt.help())
 }
 
+fn update_config_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map_err(|e| format!("cannot resolve config directory: {e}"))
+}
+
+fn current_app_version(app: &AppHandle) -> updates::SemVer {
+    let v = &app.package_info().version;
+    updates::SemVer::from_parts(v.major, v.minor, v.patch)
+}
+
+#[tauri::command]
+fn update_settings_get(app: AppHandle) -> Result<updates::UpdateSettings, String> {
+    let dir = update_config_dir(&app)?;
+    Ok(updates::load_settings(&dir))
+}
+
+#[tauri::command]
+fn update_settings_set(
+    app: AppHandle,
+    onboarding_completed: Option<bool>,
+    automatic: Option<bool>,
+    interval_days: Option<u64>,
+) -> Result<updates::UpdateSettings, String> {
+    let dir = update_config_dir(&app)?;
+    let mut settings = updates::load_settings(&dir);
+    if let Some(v) = onboarding_completed {
+        settings.onboarding_completed = v;
+    }
+    if let Some(v) = automatic {
+        settings.automatic_update_checks_enabled = v;
+    }
+    if let Some(v) = interval_days {
+        if !updates::ALLOWED_INTERVALS_DAYS.contains(&v) {
+            return Err("invalid update check interval".into());
+        }
+        settings.update_check_interval_days = v;
+    }
+    updates::save_settings(&dir, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn update_check_now(app: AppHandle) -> Result<updates::UpdateCheckResult, String> {
+    let dir = update_config_dir(&app)?;
+    let mut settings = updates::load_settings(&dir);
+    let result = updates::perform_check(
+        &mut settings,
+        current_app_version(&app),
+        updates::now_secs(),
+    );
+    updates::save_settings(&dir, &settings)?;
+    Ok(result)
+}
+
+/// Launch-time automatic check: performs at most one GitHub request and only
+/// when automatic checks are enabled AND the selected interval elapsed.
+#[tauri::command]
+fn update_auto_check_if_due(
+    app: AppHandle,
+) -> Result<Option<updates::UpdateCheckResult>, String> {
+    let dir = update_config_dir(&app)?;
+    let mut settings = updates::load_settings(&dir);
+    let due = updates::interval_elapsed(
+        settings.last_update_check_at,
+        settings.update_check_interval_days,
+        updates::now_secs(),
+    );
+    if !settings.automatic_update_checks_enabled || !due {
+        return Ok(None);
+    }
+    let result = updates::perform_check(
+        &mut settings,
+        current_app_version(&app),
+        updates::now_secs(),
+    );
+    updates::save_settings(&dir, &settings)?;
+    Ok(Some(result))
+}
+
+/// Opens ONLY the official release page built from a strictly validated tag.
+#[tauri::command]
+fn open_update_release(tag: String) -> Result<(), String> {
+    let url = updates::release_page_url(&tag)?;
+    external::open_release_page(&url)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -586,8 +674,66 @@ pub fn run() {
             mat2_version,
             mat2_formats,
             mat2_check_dependencies,
-            mat2_help
+            mat2_help,
+            update_settings_get,
+            update_settings_set,
+            update_check_now,
+            update_auto_check_if_due,
+            open_update_release
         ])
+        .setup(|app| {
+            let handle = app.handle();
+            let check_updates = tauri::menu::MenuItem::with_id(
+                handle,
+                "menu-check-updates",
+                "Check for Updates…",
+                true,
+                None::<&str>,
+            )?;
+            let settings_item = tauri::menu::MenuItem::with_id(
+                handle,
+                "menu-open-settings",
+                "Settings…",
+                true,
+                Some("CmdOrCtrl+,"),
+            )?;
+            let app_menu = tauri::menu::SubmenuBuilder::new(handle, "metadata'nt")
+                .item(&tauri::menu::PredefinedMenuItem::about(handle, None, None)?)
+                .separator()
+                .item(&settings_item)
+                .item(&check_updates)
+                .separator()
+                .item(&tauri::menu::PredefinedMenuItem::hide(handle, None)?)
+                .item(&tauri::menu::PredefinedMenuItem::hide_others(handle, None)?)
+                .item(&tauri::menu::PredefinedMenuItem::show_all(handle, None)?)
+                .separator()
+                .item(&tauri::menu::PredefinedMenuItem::quit(handle, None)?)
+                .build()?;
+            let edit_menu = tauri::menu::SubmenuBuilder::new(handle, "Edit")
+                .item(&tauri::menu::PredefinedMenuItem::cut(handle, None)?)
+                .item(&tauri::menu::PredefinedMenuItem::copy(handle, None)?)
+                .item(&tauri::menu::PredefinedMenuItem::paste(handle, None)?)
+                .item(&tauri::menu::PredefinedMenuItem::select_all(handle, None)?)
+                .build()?;
+            let window_menu = tauri::menu::SubmenuBuilder::new(handle, "Window")
+                .item(&tauri::menu::PredefinedMenuItem::minimize(handle, None)?)
+                .item(&tauri::menu::PredefinedMenuItem::fullscreen(handle, None)?)
+                .build()?;
+            let menu = tauri::menu::MenuBuilder::new(handle)
+                .items(&[&app_menu, &edit_menu, &window_menu])
+                .build()?;
+            app.set_menu(menu)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "menu-check-updates" => {
+                let _ = app.emit("menu-check-updates", ());
+            }
+            "menu-open-settings" => {
+                let _ = app.emit("menu-open-settings", ());
+            }
+            _ => {}
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
