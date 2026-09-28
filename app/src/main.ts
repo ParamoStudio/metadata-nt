@@ -987,9 +987,6 @@ function boot(): void {
   });
   bind("btn-advanced", openAdvanced);
   bind("advanced-close", closeAdvanced);
-  mustEl("advanced-overlay").addEventListener("click", (e) => {
-    if (e.target === mustEl("advanced-overlay")) closeAdvanced();
-  });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (!mustEl("confirm-overlay").classList.contains("hidden")) {
