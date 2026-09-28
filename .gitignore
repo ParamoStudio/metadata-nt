@@ -11,3 +11,5 @@ app/dist/
 app/src-tauri/resources/mat2-runtime/*
 !app/src-tauri/resources/mat2-runtime/.gitkeep
 build/
+__pycache__/
+*.pyc
