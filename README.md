@@ -26,7 +26,7 @@ The cleaning is still MAT2. metadata'nt adds the interface, safer defaults, befo
 No account. No subscription. No telemetry. No bullshit.
 
 <p align="center">
-  <img src="assets/screenshot.png" width="900" alt="metadata'nt main window">
+  <img src="assets/screenshoot.png" width="900" alt="metadata'nt main window">
 </p>
 
 ## Who is it for?
