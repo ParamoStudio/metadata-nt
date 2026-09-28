@@ -87,6 +87,12 @@ That's basically it.
 
 Advanced settings contain archive handling, synthetic metadata, the optional tripwire, diagnostics and destructive in-place replacement.
 
+<h1 align="center">PORTING</h1>
+<p align="center">
+  If you want to port this to Windows or Linux read this: (or give it to your LLM) <a href="https://github.com/ParamoStudio/metadata-nt/blob/main/PORTING.md">PORTING</a>.<br>
+  Full disclosure: this guide was written by a local Qwen 3.8 LLM. The project too was aided by it. 
+</p>
+
 ## Privacy model
 
 Normal file inspection and cleaning happen locally on your machine.
@@ -131,3 +137,4 @@ Bundled third-party components remain under their respective licenses. See the p
 <p align="center">
   <strong>No subscriptions, no telemetry, no bullshit.</strong>
 </p>
+
