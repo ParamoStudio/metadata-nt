@@ -202,6 +202,7 @@ log "Stage 6: install into app resources"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 rsync -a "${DIST}/mat2-runtime/" "$DEST/"
+touch "${DEST}/.gitkeep"
 echo "Installed: ${DEST}"
 echo
 echo "PACKAGING OK — frozen runtime verified in clean env."
