@@ -57,6 +57,7 @@ export interface FileJobResult {
   detail: string;
   diffs: MetadataDiff[];
   summary: DiffSummary | null;
+  committed: boolean;
 }
 
 /** Payload of `start_clean_job` (camelCase per serde rename_all). */

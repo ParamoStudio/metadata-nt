@@ -55,6 +55,22 @@ export function setInplaceArmed(armed: boolean): Promise<void> {
   return invoke("set_inplace_armed", { armed });
 }
 
+export function openMat2Site(): Promise<void> {
+  return invoke("open_mat2_site");
+}
+
+export function openDangerzoneSite(): Promise<void> {
+  return invoke("open_dangerzone_site");
+}
+
+export function openPrivacytoolsSite(): Promise<void> {
+  return invoke("open_privacytools_site");
+}
+
+export function revealOutput(jobId: string): Promise<number> {
+  return invoke<number>("reveal_output", { jobId });
+}
+
 export function inspectSelection(id: string): Promise<InspectionDto> {
   return invoke<InspectionDto>("inspect_selection", { id });
 }

@@ -379,6 +379,9 @@ pub struct FileJobResult {
     pub detail: String,
     pub diffs: Vec<MetadataDiff>,
     pub summary: Option<DiffSummary>,
+    /// True when a verified output was committed (frontend may offer Reveal).
+    /// The path itself never crosses IPC; reveal_output resolves it Rust-side.
+    pub committed: bool,
 }
 
 pub trait JobEvents: Send + Sync {
@@ -467,6 +470,7 @@ pub fn run_job(
                         detail: sanitize(&e),
                         diffs: Vec::new(),
                         summary: None,
+                        committed: false,
                     })
                     .collect();
                 for r in &results {
@@ -505,6 +509,7 @@ pub fn run_job(
                 detail: "Cancelled before processing".into(),
                 diffs: Vec::new(),
                 summary: None,
+                committed: false,
             };
             events.status(&item.id, FileStatus::Cancelled);
             events.file_result(&r, None);
@@ -567,6 +572,7 @@ pub fn run_job(
                         detail: sanitize(&format!("cannot prepare output location: {e}")),
                         diffs: Vec::new(),
                         summary: None,
+                        committed: false,
                     };
                     log_line(events, &format!("{}: {}", item.display_name, r.detail));
                     events.status(&item.id, FileStatus::Failed);
@@ -625,6 +631,7 @@ pub fn run_job(
                     detail,
                     diffs,
                     summary: Some(summary),
+                    committed: true,
                 };
                 events.status(&item.id, status);
                 events.file_result(&r, Some(&o.final_path));
@@ -638,6 +645,7 @@ pub fn run_job(
                 detail: "Cancelled during processing".into(),
                 diffs: Vec::new(),
                 summary: None,
+                committed: false,
             },
             Err(PipelineError::Unsupported(m)) => FileJobResult {
                 id: item.id.clone(),
@@ -646,6 +654,7 @@ pub fn run_job(
                 detail: sanitize(&format!("MAT2 does not support this format ({m}); not processed")),
                 diffs: Vec::new(),
                 summary: None,
+                committed: false,
             },
             Err(e) => FileJobResult {
                 id: item.id.clone(),
@@ -654,6 +663,7 @@ pub fn run_job(
                 detail: sanitize(&e.to_string()),
                 diffs: Vec::new(),
                 summary: None,
+                committed: false,
             },
         };
         log_line(events, &format!("{}: {}", result.display_name, result.detail));

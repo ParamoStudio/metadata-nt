@@ -47,11 +47,21 @@ classified explicitly; broken symlinks are skipped with a reason.
 
 Planned additions (each lands with its rationale line here in the same commit):
 
-- `opener:allow-open-url` scoped to the three exact URLs, OR (preferred) plain
-  Rust-side opening with no frontend permission at all (Task 14 decides; default
-  is Rust-side so no capability is added).
-- `opener:allow-reveal-item-in-dir` or Rust-side equivalent for Reveal Output
-  (Task 14).
+- (none pending — decisions below resolved Task 14 without new permissions)
+
+### Task 14 decision: external links & Reveal without the opener plugin
+
+`external.rs` opens the three hard-coded URLs and the job's committed output
+directories via Rust-side `std::process::Command::new("open")` (macOS system
+opener, argv vector, never a shell). **No opener plugin, no capability change**:
+the WebView has no URL-opening or path-opening permission at all; it invokes
+only `open_mat2_site` / `open_dangerzone_site` / `open_privacytools_site` /
+`reveal_output(job_id)`. Defense in depth: `open_approved_url` re-validates the
+URL against the compile-time allow-list and rejects query/fragment; unit tests
+assert exactly three URL constant declarations exist in the source and that
+unapproved URLs are rejected without spawning. `reveal_output` resolves only
+paths the job pipeline itself recorded, keyed by matching job id — unknown ids
+error out.
 
 ## CSP (tauri.conf.json → app.security.csp)
 

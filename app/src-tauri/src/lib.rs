@@ -6,6 +6,7 @@
 //! frontend never receives a generic execute/shell/filesystem/URL capability,
 //! and absolute source paths never cross the boundary (opaque IDs only).
 
+mod external;
 mod jobs;
 mod log_sanitize;
 mod mat2_runner;
@@ -177,6 +178,38 @@ struct JobSettingsDto {
 #[tauri::command]
 fn set_inplace_armed(state: State<'_, AppState>, armed: bool) {
     state.inplace_armed.store(armed, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn open_mat2_site() -> Result<(), String> {
+    external::open_mat2_site()
+}
+
+#[tauri::command]
+fn open_dangerzone_site() -> Result<(), String> {
+    external::open_dangerzone_site()
+}
+
+#[tauri::command]
+fn open_privacytools_site() -> Result<(), String> {
+    external::open_privacytools_site()
+}
+
+/// Reveal the committed output directories of ONE known job. The frontend
+/// supplies only a job id; the paths revealed are exclusively those the job
+/// pipeline itself recorded — never frontend-provided paths.
+#[tauri::command]
+fn reveal_output(state: State<'_, AppState>, job_id: String) -> Result<usize, String> {
+    let slot = state.job.lock().expect("poisoned");
+    let active = slot
+        .as_ref()
+        .filter(|j| j.job_id == job_id)
+        .ok_or_else(|| "unknown job id".to_string())?;
+    let outputs = active.outputs.lock().expect("poisoned").clone();
+    drop(slot);
+    let dirs = external::reveal_dirs(&outputs);
+    external::reveal_paths(&dirs)?;
+    Ok(dirs.len())
 }
 
 struct TauriJobEvents {
@@ -385,6 +418,10 @@ pub fn run() {
             cancel_job,
             set_inplace_armed,
             inspect_selection,
+            open_mat2_site,
+            open_dangerzone_site,
+            open_privacytools_site,
+            reveal_output,
             mat2_version,
             mat2_formats,
             mat2_check_dependencies,

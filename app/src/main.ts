@@ -27,6 +27,8 @@ interface UiState {
   inspectingId: string | null;
   jobRunning: boolean;
   customRootName: string | null;
+  lastJobId: string | null;
+  hasCommittedOutputs: boolean;
 }
 
 const state: UiState = {
@@ -39,6 +41,8 @@ const state: UiState = {
   inspectingId: null,
   jobRunning: false,
   customRootName: null,
+  lastJobId: null,
+  hasCommittedOutputs: false,
 };
 
 const MAX_LOG_LINES = 500;
@@ -582,6 +586,8 @@ async function startJob(): Promise<void> {
     }
   }
   setJobRunning(true);
+  state.hasCommittedOutputs = false;
+  updateRevealButton();
   logInfo(`Job started: ${ids.length} file(s), mode ${settings.lightweight ? "lightweight" : "maximum removal"}, ${settings.inplace ? "IN PLACE (destructive)" : `output ${settings.output}`}`);
   try {
     await ipc.startCleanJob(ids, settings);
@@ -589,6 +595,11 @@ async function startJob(): Promise<void> {
     logError("start job", err);
     setJobRunning(false);
   }
+}
+
+function updateRevealButton(): void {
+  const btn = mustEl("btn-reveal");
+  btn.classList.toggle("hidden", !(state.lastJobId && state.hasCommittedOutputs));
 }
 
 function boot(): void {
@@ -619,6 +630,22 @@ function boot(): void {
     for (const f of visibleFiles()) state.checked.delete(f.id);
     renderFiles();
   });
+
+  bind("btn-reveal", () => {
+    const jobId = state.lastJobId;
+    if (!jobId) return;
+    ipc
+      .revealOutput(jobId)
+      .then((n) => logInfo(`Revealed ${n} output folder(s) in Finder.`))
+      .catch((err) => logError("reveal output", err));
+  });
+  bind("link-mat2", () => ipc.openMat2Site().catch((e) => logError("open MAT2 site", e)));
+  bind("link-dangerzone", () =>
+    ipc.openDangerzoneSite().catch((e) => logError("open Dangerzone site", e)),
+  );
+  bind("link-privacytools", () =>
+    ipc.openPrivacytoolsSite().catch((e) => logError("open PrivacyTools site", e)),
+  );
 
   bindDiagnostics("diag-version", "MAT2 version", ipc.mat2Version);
   bindDiagnostics("diag-formats", "Supported formats", ipc.mat2Formats);
@@ -703,6 +730,7 @@ function boot(): void {
   void ipc.onJobLog((line) => appendLog(line));
   void ipc.onJobFileResult((r) => {
     state.results.set(r.id, r);
+    if (r.committed) state.hasCommittedOutputs = true;
     const file = state.files.find((f) => f.id === r.id);
     if (file) file.status = r.status;
     renderFiles();
@@ -711,6 +739,8 @@ function boot(): void {
   void ipc.onJobFinished((e) => {
     setJobRunning(false);
     resetInplaceUi();
+    state.lastJobId = e.jobId;
+    updateRevealButton();
     logInfo(e.cancelled ? "Job cancelled." : "Job finished.");
     void refresh();
   });
