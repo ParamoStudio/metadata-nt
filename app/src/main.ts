@@ -189,6 +189,12 @@ function renderFiles(): void {
   const dropZone = mustEl("drop-zone");
   list.replaceChildren();
   dropZone.classList.toggle("hidden", state.files.length > 0);
+  mustEl("file-list-header").classList.toggle("hidden", state.files.length === 0);
+  const countEl = el("file-list-count");
+  if (countEl) {
+    const n = state.files.length;
+    countEl.textContent = `${n} file${n === 1 ? "" : "s"} · ${checkedCount()} checked`;
+  }
 
   for (const file of visibleFiles()) {
     const li = document.createElement("li");
@@ -270,11 +276,12 @@ function setJobRunning(running: boolean): void {
     const node = inputEl(id);
     if (node) node.disabled = running;
   }
-  const settings = mustEl("settings-section");
-  for (const input of settings.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
-    "input, select",
-  )) {
-    input.disabled = running;
+  for (const scope of [mustEl("settings-section"), mustEl("advanced-overlay")]) {
+    for (const input of scope.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+      "input, select",
+    )) {
+      input.disabled = running;
+    }
   }
   updateProcessBar();
 }
@@ -642,6 +649,27 @@ async function runSyntheticPreview(): Promise<void> {
   }
 }
 
+function updateOutputCards(): void {
+  for (const card of document.querySelectorAll<HTMLElement>(".output-card")) {
+    const radio = card.querySelector<HTMLInputElement>('input[name="output"]');
+    card.classList.toggle("selected", radio?.checked === true);
+  }
+}
+
+let advancedReturnFocus: HTMLElement | null = null;
+
+function openAdvanced(): void {
+  advancedReturnFocus = document.activeElement as HTMLElement | null;
+  mustEl("advanced-overlay").classList.remove("hidden");
+  (el("advanced-close") as HTMLButtonElement | null)?.focus();
+}
+
+function closeAdvanced(): void {
+  mustEl("advanced-overlay").classList.add("hidden");
+  if (advancedReturnFocus?.isConnected) advancedReturnFocus.focus();
+  advancedReturnFocus = null;
+}
+
 function updateOutputLock(): void {
   const inplaceOn = inputEl("opt-inplace")?.checked === true;
   const fieldset = mustEl("output-mode") as HTMLFieldSetElement;
@@ -957,12 +985,23 @@ function boot(): void {
   mustEl("confirm-overlay").addEventListener("click", (e) => {
     if (e.target === mustEl("confirm-overlay")) closeConfirm(false);
   });
+  bind("btn-advanced", openAdvanced);
+  bind("advanced-close", closeAdvanced);
+  mustEl("advanced-overlay").addEventListener("click", (e) => {
+    if (e.target === mustEl("advanced-overlay")) closeAdvanced();
+  });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      if (!mustEl("confirm-overlay").classList.contains("hidden")) {
-        closeConfirm(false);
-      }
+    if (e.key !== "Escape") return;
+    if (!mustEl("confirm-overlay").classList.contains("hidden")) {
+      closeConfirm(false);
+      return;
+    }
+    if (!mustEl("tripwire-info-overlay").classList.contains("hidden")) {
       mustEl("tripwire-info-overlay").classList.add("hidden");
+      return;
+    }
+    if (!mustEl("advanced-overlay").classList.contains("hidden")) {
+      closeAdvanced();
     }
   });
 
@@ -1054,12 +1093,12 @@ function boot(): void {
     radio.addEventListener("change", () => {
       const custom = document.querySelector<HTMLInputElement>('input[name="output"]:checked')?.value === "custom";
       mustEl("custom-output-row").classList.toggle("hidden", !custom);
+      updateOutputCards();
     });
   }
+  updateOutputCards();
 
   const dropZone = mustEl("drop-zone");
-  bind("drop-choose-files", () => ipc.selectFiles().catch((e) => logError("select files", e)));
-  bind("drop-choose-folder", () => ipc.selectFolder().catch((e) => logError("select folder", e)));
   dropZone.addEventListener("click", () => ipc.selectFiles().catch((e) => logError("select files", e)));
   dropZone.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {

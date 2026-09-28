@@ -23,19 +23,35 @@
         <section id="left-panel" aria-label="Files and settings">
           <div id="left-scroll">
           <div id="files-section">
-            <h2>Files</h2>
-            <div id="acquire-buttons">
-              <button id="btn-add-files" type="button">+ Files</button>
-              <button id="btn-add-folder" type="button">+ Folder</button>
-              <button id="btn-remove-selected" type="button" title="Remove checked items from the list">Remove selected</button>
+            <div id="files-header">
+              <h2>Files</h2>
+              <button id="btn-advanced" type="button" class="icon-btn" aria-label="Advanced settings" title="Advanced settings">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </button>
             </div>
             <div id="drop-zone" tabindex="0" role="button" aria-label="Drop files or folders here">
               <p id="drop-zone-title">Drop files or folders here</p>
-              <p id="drop-zone-actions">
-                <span id="drop-choose-files">Choose Files</span>
-                <span id="drop-choose-folder">Choose Folder</span>
-              </p>
               <p id="drop-zone-note">Files stay on this device. Cleaning is performed locally with MAT2.</p>
+            </div>
+            <div id="acquire-icons">
+              <button id="btn-add-files" type="button" class="acquire-btn" title="Choose files to clean">
+                <span class="acquire-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                </span>
+                <span class="acquire-label">Files</span>
+              </button>
+              <button id="btn-add-folder" type="button" class="acquire-btn" title="Choose a folder to clean">
+                <span class="acquire-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                </span>
+                <span class="acquire-label">Folder</span>
+              </button>
+            </div>
+            <div id="file-list-header" class="hidden">
+              <span id="file-list-count"></span>
+              <button id="btn-remove-selected" type="button" class="icon-btn" aria-label="Remove checked items from the list" title="Remove checked items from the list">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+              </button>
             </div>
             <ul id="file-list" aria-label="Selected files"></ul>
             <div id="extension-filters" role="group" aria-label="Filter by extension"></div>
@@ -68,129 +84,21 @@
 
             <fieldset id="output-mode">
               <legend>Output</legend>
-              <label>
-                <input type="radio" name="output" value="beside" checked />
-                Beside source
-              </label>
-              <label>
-                <input type="radio" name="output" value="custom" />
-                Custom folder
-              </label>
+              <div id="output-cards">
+                <label class="output-card">
+                  <input type="radio" name="output" value="beside" checked />
+                  <span class="output-card-text">Beside source</span>
+                </label>
+                <label class="output-card">
+                  <input type="radio" name="output" value="custom" />
+                  <span class="output-card-text">Custom folder</span>
+                </label>
+              </div>
               <div id="custom-output-row" class="hidden">
                 <button id="btn-choose-output" type="button">Choose folder…</button>
                 <span id="custom-output-path">No folder chosen yet</span>
               </div>
             </fieldset>
-
-            <details id="advanced">
-              <summary>Advanced</summary>
-              <div id="advanced-body">
-                <label>
-                  <input type="checkbox" id="opt-verbose" />
-                  Verbose MAT2 output
-                </label>
-                <label for="opt-unknown-members">Unknown members in archives</label>
-                <select id="opt-unknown-members">
-                  <option value="abort" selected>Abort (recommended)</option>
-                  <option value="omit">Omit</option>
-                  <option value="keep">Keep</option>
-                </select>
-                <p class="helper warning hidden" id="unknown-members-keep-warning">
-                  Keeping unknown archive members may preserve metadata.
-                </p>
-                <div id="synthetic-block">
-                  <label>
-                    <input type="checkbox" id="opt-synthetic" />
-                    Add plausible decoy metadata (synthetic)
-                  </label>
-                  <p class="helper" id="synthetic-explainer">
-                    MAT2 cleans first; decoy metadata is written only to the verified
-                    cleaned copy — never to your originals. Off by default and not
-                    remembered between launches.
-                  </p>
-                  <div id="synthetic-options" class="hidden">
-                    <fieldset class="synth-group">
-                      <legend>Profile behavior</legend>
-                      <label><input type="radio" name="synth-scope" value="per_file" checked /> Independent profile per file</label>
-                      <label><input type="radio" name="synth-scope" value="batch" /> Consistent profile for this batch</label>
-                    </fieldset>
-                    <fieldset class="synth-group">
-                      <legend>Identity fields</legend>
-                      <label><input type="radio" name="synth-identity" value="alias" checked /> Synthetic alias where plausible</label>
-                      <label><input type="radio" name="synth-identity" value="empty" /> Leave empty</label>
-                    </fieldset>
-                    <fieldset class="synth-group">
-                      <legend>Location</legend>
-                      <label><input type="radio" name="synth-location" value="off" checked /> No synthetic location</label>
-                      <label><input type="radio" name="synth-location" value="city" /> City/country only</label>
-                      <label><input type="radio" name="synth-location" value="gps" /> Include synthetic GPS</label>
-                      <p class="helper warning hidden" id="synthetic-gps-warning">
-                        Synthetic GPS is deliberately false. It may affect how recipients interpret the file.
-                      </p>
-                    </fieldset>
-                    <fieldset class="synth-group">
-                      <legend>Technical/device metadata</legend>
-                      <label><input type="radio" name="synth-technical" value="synthetic" checked /> Synthetic where plausible</label>
-                      <label><input type="radio" name="synth-technical" value="empty" /> Leave empty</label>
-                    </fieldset>
-                    <fieldset class="synth-group">
-                      <legend>Device serial identifiers</legend>
-                      <label><input type="radio" name="synth-serial" value="empty" checked /> Leave empty</label>
-                      <label><input type="radio" name="synth-serial" value="generate" /> Generate synthetic identifiers [expert]</label>
-                    </fieldset>
-                    <div id="tripwire-block">
-                      <span id="tripwire-label-row">
-                        <label for="opt-tripwire">Plant Investigation Tripwire</label>
-                        <button id="btn-tripwire-info" type="button" aria-label="About Investigation Tripwire" title="About Investigation Tripwire">(i)</button>
-                      </span>
-                      <input type="checkbox" id="opt-tripwire" />
-                      <div id="tripwire-panel" class="hidden">
-                        <h4>Investigation Tripwire</h4>
-                        <label for="tripwire-email">Alert email</label>
-                        <input type="text" id="tripwire-email" placeholder="alias@relay.example" autocomplete="off" spellcheck="false" />
-                        <label for="tripwire-redirect">Redirect destination</label>
-                        <input type="text" id="tripwire-redirect" value="https://archive.org/" autocomplete="off" spellcheck="false" />
-                        <p class="helper">
-                          Canarytokens.org will alert this address if somebody
-                          follows the planted Source reference.
-                        </p>
-                        <p class="helper">
-                          The alert email is sent to Canarytokens.org for notification
-                          purposes. It is not written into the processed file or
-                          exposed through the planted metadata URL.
-                        </p>
-                        <p class="helper warning">
-                          Recommended: use a dedicated email alias or relay
-                          rather than your primary email address.
-                        </p>
-                        <div id="tripwire-panel-buttons">
-                          <button id="btn-tripwire-cancel" type="button">Cancel</button>
-                          <button id="btn-tripwire-enable" type="button">Enable Tripwire</button>
-                        </div>
-                      </div>
-                    </div>
-                    <div id="synthetic-preview-row">
-                      <button id="btn-synth-preview" type="button">Preview synthetic profile</button>
-                      <span id="synthetic-preview-ext" class="helper"></span>
-                    </div>
-                    <pre id="synthetic-preview" class="hidden" aria-label="Synthetic profile preview"></pre>
-                  </div>
-                </div>
-                <label id="inplace-row">
-                  <input type="checkbox" id="opt-inplace" />
-                  Replace original files
-                </label>
-                <p class="helper warning hidden" id="inplace-warning">
-                  This changes the selected originals. No wrapper-created backup is guaranteed.
-                </p>
-                <div id="diagnostics" role="group" aria-label="MAT2 diagnostics">
-                  <button id="diag-version" type="button">Show MAT2 version</button>
-                  <button id="diag-formats" type="button">List supported formats</button>
-                  <button id="diag-deps" type="button">Check dependencies</button>
-                  <button id="diag-help" type="button">Show MAT2 help</button>
-                </div>
-              </div>
-            </details>
           </div>
           </div>
 
@@ -242,14 +150,156 @@
       <!-- Footer: external links + no-telemetry note -->
       <footer id="footer">
         <nav id="external-links" aria-label="External resources">
+          <span id="resources-label">Resources:</span>
           <button id="link-mat2" type="button">MAT2</button>
           <span aria-hidden="true">·</span>
           <button id="link-dangerzone" type="button" title="For documents you do not trust and may be malicious.">Dangerzone</button>
           <span aria-hidden="true">·</span>
           <button id="link-privacytools" type="button">PrivacyTools</button>
         </nav>
-        <span id="no-telemetry">No telemetry</span>
+        <span id="no-telemetry">No subscriptions, no telemetry, no bullshit.</span>
       </footer>
+
+      <!-- Advanced settings modal (opened from the gear button). Placed BEFORE
+           the confirm and tripwire-info overlays so those stack above it:
+           both can be triggered from controls inside this modal. -->
+      <div id="advanced-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="advanced-title">
+        <div id="advanced-box">
+          <div id="advanced-header">
+            <h3 id="advanced-title">Advanced settings</h3>
+            <button id="advanced-close" type="button" class="icon-btn" aria-label="Close advanced settings" title="Close">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <div id="advanced-body">
+            <section class="adv-group">
+              <h4>MAT2 behavior</h4>
+              <label>
+                <input type="checkbox" id="opt-verbose" />
+                Verbose MAT2 output
+              </label>
+              <label for="opt-unknown-members">Unknown members in archives</label>
+              <select id="opt-unknown-members">
+                <option value="abort" selected>Abort (recommended)</option>
+                <option value="omit">Omit</option>
+                <option value="keep">Keep</option>
+              </select>
+              <p class="helper" id="unknown-members-helper">
+                Controls what MAT2 does when an archive contains members it cannot
+                recognize or safely process. Abort stops processing (recommended);
+                Omit removes unknown members; Keep preserves them and may preserve
+                metadata.
+              </p>
+              <p class="helper warning hidden" id="unknown-members-keep-warning">
+                Keeping unknown archive members may preserve metadata.
+              </p>
+            </section>
+
+            <section class="adv-group">
+              <h4>Synthetic metadata</h4>
+              <div id="synthetic-block">
+                <label>
+                  <input type="checkbox" id="opt-synthetic" />
+                  Add plausible decoy metadata (synthetic)
+                </label>
+                <p class="helper" id="synthetic-explainer">
+                  MAT2 cleans first; decoy metadata is written only to the verified
+                  cleaned copy — never to your originals. Off by default and not
+                  remembered between launches.
+                </p>
+                <div id="synthetic-options" class="hidden">
+                  <fieldset class="synth-group">
+                    <legend>Profile behavior</legend>
+                    <label><input type="radio" name="synth-scope" value="per_file" checked /> Independent profile per file</label>
+                    <label><input type="radio" name="synth-scope" value="batch" /> Consistent profile for this batch</label>
+                  </fieldset>
+                  <fieldset class="synth-group">
+                    <legend>Identity fields</legend>
+                    <label><input type="radio" name="synth-identity" value="alias" checked /> Synthetic alias where plausible</label>
+                    <label><input type="radio" name="synth-identity" value="empty" /> Leave empty</label>
+                  </fieldset>
+                  <fieldset class="synth-group">
+                    <legend>Location</legend>
+                    <label><input type="radio" name="synth-location" value="off" checked /> No synthetic location</label>
+                    <label><input type="radio" name="synth-location" value="city" /> City/country only</label>
+                    <label><input type="radio" name="synth-location" value="gps" /> Include synthetic GPS</label>
+                    <p class="helper warning hidden" id="synthetic-gps-warning">
+                      Synthetic GPS is deliberately false. It may affect how recipients interpret the file.
+                    </p>
+                  </fieldset>
+                  <fieldset class="synth-group">
+                    <legend>Technical/device metadata</legend>
+                    <label><input type="radio" name="synth-technical" value="synthetic" checked /> Synthetic where plausible</label>
+                    <label><input type="radio" name="synth-technical" value="empty" /> Leave empty</label>
+                  </fieldset>
+                  <fieldset class="synth-group">
+                    <legend>Device serial identifiers</legend>
+                    <label><input type="radio" name="synth-serial" value="empty" checked /> Leave empty</label>
+                    <label><input type="radio" name="synth-serial" value="generate" /> Generate synthetic identifiers [expert]</label>
+                  </fieldset>
+                  <div id="tripwire-block">
+                    <span id="tripwire-label-row">
+                      <label for="opt-tripwire">Plant Investigation Tripwire</label>
+                      <button id="btn-tripwire-info" type="button" aria-label="About Investigation Tripwire" title="About Investigation Tripwire">(i)</button>
+                    </span>
+                    <input type="checkbox" id="opt-tripwire" />
+                    <div id="tripwire-panel" class="hidden">
+                      <h4>Investigation Tripwire</h4>
+                      <label for="tripwire-email">Alert email</label>
+                      <input type="text" id="tripwire-email" placeholder="alias@relay.example" autocomplete="off" spellcheck="false" />
+                      <label for="tripwire-redirect">Redirect destination</label>
+                      <input type="text" id="tripwire-redirect" value="https://archive.org/" autocomplete="off" spellcheck="false" />
+                      <p class="helper">
+                        Canarytokens.org will alert this address if somebody
+                        follows the planted Source reference.
+                      </p>
+                      <p class="helper">
+                        The alert email is sent to Canarytokens.org for notification
+                        purposes. It is not written into the processed file or
+                        exposed through the planted metadata URL.
+                      </p>
+                      <p class="helper warning">
+                        Recommended: use a dedicated email alias or relay
+                        rather than your primary email address.
+                      </p>
+                      <div id="tripwire-panel-buttons">
+                        <button id="btn-tripwire-cancel" type="button">Cancel</button>
+                        <button id="btn-tripwire-enable" type="button">Enable Tripwire</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="synthetic-preview-row">
+                    <button id="btn-synth-preview" type="button">Preview synthetic profile</button>
+                    <span id="synthetic-preview-ext" class="helper"></span>
+                  </div>
+                  <pre id="synthetic-preview" class="hidden" aria-label="Synthetic profile preview"></pre>
+                </div>
+              </div>
+            </section>
+
+            <section class="adv-group">
+              <h4>Destructive actions</h4>
+              <label id="inplace-row">
+                <input type="checkbox" id="opt-inplace" />
+                Replace original files
+              </label>
+              <p class="helper warning hidden" id="inplace-warning">
+                This changes the selected originals. No wrapper-created backup is guaranteed.
+              </p>
+            </section>
+
+            <section class="adv-group">
+              <h4>Diagnostics</h4>
+              <div id="diagnostics" role="group" aria-label="MAT2 diagnostics">
+                <button id="diag-version" type="button">Show MAT2 version</button>
+                <button id="diag-formats" type="button">List supported formats</button>
+                <button id="diag-deps" type="button">Check dependencies</button>
+                <button id="diag-help" type="button">Show MAT2 help</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
 
       <div id="confirm-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <div id="confirm-box">
