@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/banner.png" width="150" alt="metadata'nt">
+  <img src="assets/banner.png" width="350" alt="metadata'nt">
 </p>
 
 <h1 align="center">metadata'nt</h1>
 
 <p align="center">
-  <strong>Keep the file. Lose the trail.</strong>
+  <strong>Metadata Scrubber Interface.</strong>
 </p>
 
 <p align="center">
@@ -26,16 +26,16 @@ The cleaning is still MAT2. metadata'nt adds the interface, safer defaults, befo
 No account. No subscription. No telemetry. No bullshit.
 
 <p align="center">
-  <img src="assets/screenshot-main.png" width="900" alt="metadata'nt main window">
+  <img src="assets/screenshot.png" width="900" alt="metadata'nt main window">
 </p>
 
 ## Who is it for?
 
-- **Journalists & sources** — remove location, device and author metadata before sharing material.
-- **Activists & whistleblowers** — reduce accidental identifying information in files.
-- **Lawyers & researchers** — inspect and sanitise documents before disclosure or publication.
-- **Photographers & creators** — see exactly what metadata leaves your machine.
-- **OSINT & security people** — create controlled files with clean or synthetic metadata.
+- **Journalists & sources:** remove location, device and author metadata before sharing material.
+- **Activists & whistleblowers:** reduce accidental identifying information in files.
+- **Lawyers & researchers:** inspect and sanitise documents before disclosure or publication.
+- **Photographers & creators:** see exactly what metadata leaves your machine.
+- **OSINT & security oriented individuala:** create controlled files with clean or synthetic metadata.
 - **Anyone sending files directly** through email, messaging, cloud storage or file transfer.
 
 ## What it does
@@ -121,8 +121,6 @@ MAT2 is distributed under the **GNU Lesser General Public License v3.0 or later 
 This project is independent from MAT2 and is not an official MAT2 frontend.
 
 ## License
-
-metadata'nt is free software released under the **GNU General Public License v3.0 (GPL-3.0)**.
 
 See [`LICENSE`](LICENSE).
 
