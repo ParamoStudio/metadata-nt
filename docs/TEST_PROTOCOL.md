@@ -192,14 +192,19 @@ real token. Use a dedicated test email alias and a harmless test file.
 
 ## Results log
 
+Build column: RC = `metadata'nt` 0.1.0 @ commit `a74682f` (frozen runtime bundled).
+"auto" rows were executed by the automated suites/packaging battery on
+2026-09-28; "OWNER" rows require the interactive session (GUI dialogs,
+drag-drop, live canary).
+
 | Test | Date | Build | Result | Notes |
 |---|---|---|---|---|
-| A | — | — | pending | — |
-| B | — | — | pending | — |
-| C | — | — | pending | — |
-| D | — | — | pending | — |
-| E | — | — | pending | — |
-| F | — | — | pending | — |
-| G | — | — | pending | — |
-| H | — | — | pending | — |
-| I | — | — | pending | — |
+| A | 2026-09-28 | RC a74682f | PARTIAL-auto | Steps 1–3, 9 pre-recorded (SHA-256 `17307b12…4035`, `testA_pre_mat2.txt`, `testA_pre_exiftool.txt`); steps 4–8, 10–11 = OWNER |
+| B | 2026-09-28 | RC a74682f | PARTIAL-auto | CLI-level auto PASS (format matrix: pdf → Warning with exactly the 3 structural fields `creation-date:-1/format:PDF-1.5/mod-date:-1`; source SHA unchanged; output opens via Poppler read-back); GUI steps = OWNER |
+| C | 2026-09-28 | RC a74682f | PARTIAL-auto | Auto: folder-batch relative-structure + group tests PASS (`run_job_folder_batch_*`); toggles/uncheck/layout visual = OWNER |
+| D | 2026-09-28 | RC a74682f | auto PASS | Cancel suite PASS (before-start, during-clean w/ child kill, after-commit survival, no later files start); GUI button feel = OWNER |
+| E | 2026-09-28 | RC a74682f | PARTIAL-auto | Auto: in-place suite + arm-gate + neutralisation PASS; modals/restart-stale-state = OWNER |
+| F | 2026-09-28 | RC a74682f | PARTIAL-auto | F3/F4 backend-verified (resolve-Err → fatal DTO unit tests; UI gate = 3 reviewed lines; visual optional); F5 auto PASS (sanitizer suite); F1/F2 buttons = OWNER |
+| G | 2026-09-28 | RC a74682f | PARTIAL-auto | Offline auto PASS (`env -i` battery: 14 cleans + inspect + synthetic + tripwire plant w/ unroutable URL, zero network deps); links/reveal clicks = OWNER |
+| H | 2026-09-28 | RC a74682f | PARTIAL-auto | Auto: engine 60/60 + Rust synthetic/tripwire 14/14 incl. redaction & email-privacy; UI panels/preview/3-col = OWNER |
+| I | — | — | OWNER | Live sacrificial-token procedure (only step touching the real service) |
