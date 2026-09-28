@@ -17,6 +17,7 @@ pub struct SelectedFile {
     pub extension: Option<String>,
     pub relative_path: Option<PathBuf>,
     pub size: u64,
+    #[allow(dead_code)] // Task 4: explicit symlink classification; read via test-gated is_symlink
     pub symlink: bool,
     pub status: FileStatus,
 }
@@ -60,7 +61,9 @@ pub fn enumerate_folder(root: &Path) -> Vec<PathBuf> {
 }
 
 fn enumerate_into(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
     entries.sort_by_key(|e| e.path());
     for entry in entries {
@@ -92,10 +95,10 @@ fn classify(path: &Path, root: Option<&Path>) -> Result<SelectedFile, String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .ok_or_else(|| "invalid file name".to_string())?;
-    let extension = path
-        .extension()
-        .map(|e| e.to_string_lossy().into_owned());
-    let relative_path = root.and_then(|r| path.strip_prefix(r).ok()).map(PathBuf::from);
+    let extension = path.extension().map(|e| e.to_string_lossy().into_owned());
+    let relative_path = root
+        .and_then(|r| path.strip_prefix(r).ok())
+        .map(PathBuf::from);
 
     Ok(SelectedFile {
         id: Uuid::new_v4().to_string(),
@@ -129,14 +132,16 @@ impl Registry {
                         outcome.duplicates.push(existing.clone());
                         continue;
                     }
-                    if entry.relative_path.is_none() {
-                        if let Some(r) = root {
-                            entry.relative_path =
-                                entry.canonical.strip_prefix(r).ok().map(PathBuf::from);
-                        }
+                    if entry.relative_path.is_none()
+                        && let Some(r) = root
+                    {
+                        entry.relative_path =
+                            entry.canonical.strip_prefix(r).ok().map(PathBuf::from);
                     }
                     let id = entry.id.clone();
-                    inner.by_canonical.insert(entry.canonical.clone(), id.clone());
+                    inner
+                        .by_canonical
+                        .insert(entry.canonical.clone(), id.clone());
                     inner.by_id.insert(id.clone(), entry);
                     inner.order.push(id.clone());
                     outcome.added.push(id);
@@ -148,6 +153,7 @@ impl Registry {
 
     /// Rust-internal resolution: opaque id → approved absolute path.
     /// Unknown ids resolve to nothing; the frontend can never express a path.
+    #[cfg(test)]
     pub fn resolve(&self, id: &str) -> Option<PathBuf> {
         self.inner
             .lock()
@@ -158,13 +164,19 @@ impl Registry {
     }
 
     pub fn snapshot(&self, id: &str) -> Option<SelectionSnapshot> {
-        self.inner.lock().expect("registry poisoned").by_id.get(id).map(|e| SelectionSnapshot {
-            path: e.path.clone(),
-            display_name: e.display_name.clone(),
-            relative_path: e.relative_path.clone(),
-        })
+        self.inner
+            .lock()
+            .expect("registry poisoned")
+            .by_id
+            .get(id)
+            .map(|e| SelectionSnapshot {
+                path: e.path.clone(),
+                display_name: e.display_name.clone(),
+                relative_path: e.relative_path.clone(),
+            })
     }
 
+    #[cfg(test)]
     pub fn is_symlink(&self, id: &str) -> Option<bool> {
         self.inner
             .lock()
@@ -198,6 +210,7 @@ impl Registry {
         removed
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.inner.lock().expect("registry poisoned").order.len()
     }
@@ -257,7 +270,7 @@ mod tests {
         let dir = tempdir("unknown");
         let f = dir.join("a.jpg");
         write_file(&f, b"x");
-        reg.add_paths(&[f.clone()], None);
+        reg.add_paths(std::slice::from_ref(&f), None);
         assert!(reg.resolve("nonexistent").is_none());
         assert!(reg.resolve("").is_none());
         assert!(reg.resolve("../etc/passwd").is_none());
@@ -271,7 +284,7 @@ mod tests {
         let f = dir.join("a.jpg");
         write_file(&f, b"x");
         let reg = Registry::default();
-        let outcome = reg.add_paths(&[f.clone()], None);
+        let outcome = reg.add_paths(std::slice::from_ref(&f), None);
         assert_eq!(outcome.added.len(), 1);
         let id = outcome.added[0].clone();
         assert_eq!(reg.resolve(&id).unwrap(), f);
@@ -286,11 +299,11 @@ mod tests {
         write_file(&f, b"data");
         let reg = Registry::default();
 
-        let first = reg.add_paths(&[f.clone()], None);
+        let first = reg.add_paths(std::slice::from_ref(&f), None);
         assert_eq!(first.added.len(), 1);
         assert!(first.duplicates.is_empty());
 
-        let second = reg.add_paths(&[f.clone()], None);
+        let second = reg.add_paths(std::slice::from_ref(&f), None);
         assert!(second.added.is_empty());
         assert_eq!(second.duplicates, first.added);
         assert_eq!(reg.len(), 1);
@@ -298,7 +311,7 @@ mod tests {
         // same target reached through a symlink also dedupes (canonical key)
         let link = dir.join("link.jpg");
         std::os::unix::fs::symlink(&f, &link).unwrap();
-        let third = reg.add_paths(&[link.clone()], None);
+        let third = reg.add_paths(std::slice::from_ref(&link), None);
         assert!(third.added.is_empty());
         assert_eq!(third.duplicates, first.added);
         assert_eq!(reg.len(), 1);
@@ -311,7 +324,7 @@ mod tests {
         let hostile = dir.join("<img src=x onerror=alert(1)>.jpg");
         write_file(&hostile, b"x");
         let reg = Registry::default();
-        reg.add_paths(&[hostile.clone()], None);
+        reg.add_paths(std::slice::from_ref(&hostile), None);
         let list = reg.public_list();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].display_name, "<img src=x onerror=alert(1)>.jpg");
@@ -328,12 +341,12 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let reg = Registry::default();
-        let via_link = reg.add_paths(&[link.clone()], None);
+        let via_link = reg.add_paths(std::slice::from_ref(&link), None);
         assert_eq!(via_link.added.len(), 1);
         assert_eq!(reg.is_symlink(&via_link.added[0]), Some(true));
 
         // the same content reached directly dedupes against the link entry
-        let direct = reg.add_paths(&[target.clone()], None);
+        let direct = reg.add_paths(std::slice::from_ref(&target), None);
         assert!(direct.added.is_empty());
         assert_eq!(direct.duplicates, via_link.added);
 
@@ -351,7 +364,7 @@ mod tests {
         let link = dir.join("broken.jpg");
         std::os::unix::fs::symlink(dir.join("nowhere.jpg"), &link).unwrap();
         let reg = Registry::default();
-        let outcome = reg.add_paths(&[link.clone()], None);
+        let outcome = reg.add_paths(std::slice::from_ref(&link), None);
         assert!(outcome.added.is_empty());
         assert_eq!(outcome.skipped.len(), 1);
         assert_eq!(outcome.skipped[0].0, "broken.jpg");
@@ -377,7 +390,12 @@ mod tests {
         let files = enumerate_folder(&root);
         let names: Vec<String> = files
             .iter()
-            .map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().into_owned())
+            .map(|p| {
+                p.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         assert_eq!(
             names,
@@ -387,14 +405,21 @@ mod tests {
                 "sub/deep/c.pdf".to_string()
             ]
         );
-        assert!(!names.iter().any(|n| n.contains("escape") || n.contains("link-to-a") || n.contains("secret")));
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.contains("escape") || n.contains("link-to-a") || n.contains("secret"))
+        );
 
         let reg = Registry::default();
         let canonical_root = fs::canonicalize(&root).unwrap();
         let outcome = reg.add_paths(&files, Some(&canonical_root));
         assert_eq!(outcome.added.len(), 3);
-        let rels: Vec<Option<String>> =
-            reg.public_list().into_iter().map(|f| f.relative_path).collect();
+        let rels: Vec<Option<String>> = reg
+            .public_list()
+            .into_iter()
+            .map(|f| f.relative_path)
+            .collect();
         assert!(rels.contains(&Some("a.txt".to_string())));
         assert!(rels.contains(&Some("sub/b.png".to_string())));
         assert!(rels.contains(&Some("sub/deep/c.pdf".to_string())));

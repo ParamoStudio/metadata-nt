@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use time::macros::format_description;
 use time::OffsetDateTime;
+use time::macros::format_description;
 
 pub const OUTPUT_DIR_NAME: &str = "MAT2 Output";
 
@@ -14,15 +14,18 @@ pub enum OutputMode {
 
 pub fn timestamp_now() -> String {
     let fmt = format_description!("[year]-[month]-[day]_[hour][minute][second]");
-    let now = OffsetDateTime::now_local()
-        .unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
     now.format(&fmt).expect("timestamp formatting")
 }
 
 /// Compute (without creating) the output root for a job:
 /// - BesideSource: `<source_parent>/MAT2 Output/<timestamp>/`
 /// - Custom:       `<custom_root>/<timestamp>/`
-pub fn job_root(mode: &OutputMode, source_parent: &Path, timestamp: &str) -> Result<PathBuf, String> {
+pub fn job_root(
+    mode: &OutputMode,
+    source_parent: &Path,
+    timestamp: &str,
+) -> Result<PathBuf, String> {
     validate_single_components(timestamp, "timestamp")?;
     match mode {
         OutputMode::BesideSource => {
@@ -62,7 +65,10 @@ pub fn ensure_root(root: &Path) -> Result<PathBuf, String> {
                     return Err(format!("output path component is a symlink: {:?}", built));
                 }
                 if !ft.is_dir() {
-                    return Err(format!("output path component is not a directory: {:?}", built));
+                    return Err(format!(
+                        "output path component is not a directory: {:?}",
+                        built
+                    ));
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -71,7 +77,10 @@ pub fn ensure_root(root: &Path) -> Result<PathBuf, String> {
                 let md = fs::symlink_metadata(&built)
                     .map_err(|e2| format!("cannot verify created dir {:?}: {e2}", built))?;
                 if md.file_type().is_symlink() || !md.file_type().is_dir() {
-                    return Err(format!("created component is not a real directory: {:?}", built));
+                    return Err(format!(
+                        "created component is not a real directory: {:?}",
+                        built
+                    ));
                 }
             }
             Err(e) => return Err(format!("cannot inspect {:?}: {e}", built)),
@@ -154,7 +163,10 @@ fn path_exists(p: &Path) -> bool {
 
 fn collided_name(name: &str, n: u32) -> String {
     let path = Path::new(name);
-    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| name.to_string());
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| name.to_string());
     match path.extension() {
         Some(ext) => format!("{stem}-{n}.{}", ext.to_string_lossy()),
         None => format!("{stem}-{n}"),
@@ -182,7 +194,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let p = std::env::temp_dir().join(format!("mat2out-{}-{}-{}", tag, std::process::id(), nanos));
+        let p =
+            std::env::temp_dir().join(format!("mat2out-{}-{}-{}", tag, std::process::id(), nanos));
         fs::create_dir_all(&p).unwrap();
         fs::canonicalize(&p).unwrap()
     }
@@ -226,7 +239,12 @@ mod tests {
     #[test]
     fn custom_root_layout() {
         let custom = tempdir("customroot");
-        let root = job_root(&OutputMode::Custom(custom.clone()), Path::new("/irrelevant"), &ts()).unwrap();
+        let root = job_root(
+            &OutputMode::Custom(custom.clone()),
+            Path::new("/irrelevant"),
+            &ts(),
+        )
+        .unwrap();
         assert_eq!(root, custom.join(ts()));
         let canonical = ensure_root(&root).unwrap();
         let f = plan_final_path(&canonical, None, "x.cleaned.png").unwrap();
@@ -251,12 +269,30 @@ mod tests {
         let root = job_root(&OutputMode::Custom(custom.clone()), Path::new("/x"), &ts()).unwrap();
         let canonical = ensure_root(&root).unwrap();
 
-        assert!(plan_final_path(&canonical, Some(Path::new("../escape")), "x.cleaned.jpg").is_err());
-        assert!(plan_final_path(&canonical, Some(Path::new("sub/../../escape")), "x.cleaned.jpg").is_err());
+        assert!(
+            plan_final_path(&canonical, Some(Path::new("../escape")), "x.cleaned.jpg").is_err()
+        );
+        assert!(
+            plan_final_path(
+                &canonical,
+                Some(Path::new("sub/../../escape")),
+                "x.cleaned.jpg"
+            )
+            .is_err()
+        );
         assert!(plan_final_path(&canonical, None, "../x.cleaned.jpg").is_err());
         assert!(plan_final_path(&canonical, None, "sub/dir/x.cleaned.jpg").is_err());
-        assert!(plan_final_path(&canonical, Some(Path::new("/abs/path")), "x.cleaned.jpg").is_err());
-        assert!(job_root(&OutputMode::Custom(custom.clone()), Path::new("/x"), "../evil").is_err());
+        assert!(
+            plan_final_path(&canonical, Some(Path::new("/abs/path")), "x.cleaned.jpg").is_err()
+        );
+        assert!(
+            job_root(
+                &OutputMode::Custom(custom.clone()),
+                Path::new("/x"),
+                "../evil"
+            )
+            .is_err()
+        );
         fs::remove_dir_all(&custom).unwrap();
     }
 
@@ -329,7 +365,12 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         let root = job_root(&OutputMode::BesideSource, &src, &ts()).unwrap();
         let canonical = ensure_root(&root).unwrap();
-        let f = plan_final_path(&canonical, Some(Path::new("子目录")), "报告.cleaned-🎉.docx").unwrap();
+        let f = plan_final_path(
+            &canonical,
+            Some(Path::new("子目录")),
+            "报告.cleaned-🎉.docx",
+        )
+        .unwrap();
         assert!(f.exists() || f.parent().unwrap().exists());
         assert_eq!(f.file_name().unwrap(), "报告.cleaned-🎉.docx");
         assert!(f.starts_with(&canonical));
@@ -357,11 +398,13 @@ mod tests {
         assert_eq!(bytes[4], b'-');
         assert_eq!(bytes[7], b'-');
         assert_eq!(bytes[10], b'_');
-        assert!(bytes
-            .iter()
-            .enumerate()
-            .all(|(i, b)| [4, 7].contains(&i) && *b == b'-'
-                || i == 10 && *b == b'_'
-                || ![4, 7, 10].contains(&i) && b.is_ascii_digit()));
+        assert!(
+            bytes
+                .iter()
+                .enumerate()
+                .all(|(i, b)| [4, 7].contains(&i) && *b == b'-'
+                    || i == 10 && *b == b'_'
+                    || ![4, 7, 10].contains(&i) && b.is_ascii_digit())
+        );
     }
 }

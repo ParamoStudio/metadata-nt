@@ -5,16 +5,21 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::log_sanitize::sanitize;
-use crate::mat2_runner::{expected_cleaned_path, CleanOptions, Mat2Output, Mat2Runtime, UnknownMembers};
+use crate::mat2_runner::{
+    CleanOptions, Mat2Output, Mat2Runtime, UnknownMembers, expected_cleaned_path,
+};
 use crate::model::{
-    diff_metadata, summarize, DiffSummary, FileStatus, MetadataDiff, MetadataEntry,
+    DiffSummary, FileStatus, MetadataDiff, MetadataEntry, diff_metadata, summarize,
 };
 use crate::output::{self, OutputMode};
-use crate::synthetic::{removed_original_values, ApplyResponse, SyntheticField, SyntheticOptions, SyntheticRuntime};
+use crate::synthetic::{
+    ApplyResponse, SyntheticField, SyntheticOptions, SyntheticRuntime, removed_original_values,
+};
 
 #[derive(Debug)]
 pub enum PipelineError {
@@ -57,6 +62,7 @@ impl JobWorkspace {
         Ok(Self { root: dir })
     }
 
+    #[cfg(test)]
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -70,6 +76,7 @@ impl JobWorkspace {
         Ok(dir)
     }
 
+    #[cfg(test)]
     pub fn exists(&self) -> bool {
         self.root.exists()
     }
@@ -90,6 +97,7 @@ fn apply_private_perms(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn sha256_file(path: &Path) -> Result<String, String> {
     let bytes = fs::read(path).map_err(|e| format!("cannot read {:?}: {e}", path))?;
     let mut hasher = Sha256::new();
@@ -125,7 +133,6 @@ pub fn copy_bytes_exclusive(src: &Path, dst: &Path) -> Result<(), String> {
 #[derive(Debug)]
 pub struct CleanOutcome {
     pub final_path: PathBuf,
-    pub mimetype: Option<String>,
     pub pre_metadata: Vec<MetadataEntry>,
     pub post_metadata: Vec<MetadataEntry>,
     pub clean_output: Mat2Output,
@@ -162,7 +169,11 @@ pub struct SyntheticOutcome {
 
 impl Default for SyntheticOutcome {
     fn default() -> Self {
-        Self { state: SyntheticState::NotRequested, fields: Vec::new(), note: None }
+        Self {
+            state: SyntheticState::NotRequested,
+            fields: Vec::new(),
+            note: None,
+        }
     }
 }
 
@@ -176,6 +187,7 @@ pub struct SynthJob<'a> {
 /// pre-inspect → stage byte-identical copy → MAT2 clean (never --inplace) →
 /// validate output exists/regular/non-empty → post-inspect → plan collision-free
 /// final path → exclusive commit. Any failure leaves no final output.
+#[cfg(test)]
 pub fn clean_one(
     rt: &Mat2Runtime,
     ws: &JobWorkspace,
@@ -184,7 +196,18 @@ pub fn clean_one(
     canonical_output_root: &Path,
     relative_dir: Option<&Path>,
 ) -> Result<CleanOutcome, PipelineError> {
-    clean_one_tracked(rt, ws, source, opts, canonical_output_root, relative_dir, &AtomicBool::new(false), &|_| Ok(()), None, "")
+    clean_one_tracked(
+        rt,
+        ws,
+        source,
+        opts,
+        canonical_output_root,
+        relative_dir,
+        &AtomicBool::new(false),
+        &|_| Ok(()),
+        None,
+        "",
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -230,7 +253,9 @@ pub fn clean_one_tracked(
     }
     if !pre.supported {
         return Err(PipelineError::Unsupported(
-            pre.mimetype.clone().unwrap_or_else(|| "unknown format".into()),
+            pre.mimetype
+                .clone()
+                .unwrap_or_else(|| "unknown format".into()),
         ));
     }
 
@@ -240,9 +265,13 @@ pub fn clean_one_tracked(
         .file_name()
         .ok_or_else(|| PipelineError::Io("source has no file name".into()))?;
     let staged = stage.join(file_name);
-    fs::copy(source, &staged).map_err(|e| PipelineError::Io(format!("staging copy failed: {e}")))?;
+    fs::copy(source, &staged)
+        .map_err(|e| PipelineError::Io(format!("staging copy failed: {e}")))?;
 
-    let cleaned = match rt.clean_cancellable(&staged, opts, cancel).map_err(PipelineError::Io)? {
+    let cleaned = match rt
+        .clean_cancellable(&staged, opts, cancel)
+        .map_err(PipelineError::Io)?
+    {
         crate::mat2_runner::CleanRunOutcome::Completed(out) => out,
         crate::mat2_runner::CleanRunOutcome::Cancelled => return Err(PipelineError::Cancelled),
     };
@@ -266,12 +295,14 @@ pub fn clean_one_tracked(
         ));
     }
     if md.len() == 0 {
-        return Err(PipelineError::OutputInvalid("produced output is empty".into()));
+        return Err(PipelineError::OutputInvalid(
+            "produced output is empty".into(),
+        ));
     }
 
-    let post = rt.inspect_json(&produced).map_err(|_| {
-        PipelineError::OutputInvalid("post-inspection could not complete".into())
-    })?;
+    let post = rt
+        .inspect_json(&produced)
+        .map_err(|_| PipelineError::OutputInvalid("post-inspection could not complete".into()))?;
     if post.error.is_some() || !post.supported {
         return Err(PipelineError::OutputInvalid(
             "post-inspection could not complete".into(),
@@ -302,13 +333,23 @@ pub fn clean_one_tracked(
         let originals = removed_original_values(&diffs);
         let backup = stage.join(format!(
             "{}.pre-synth",
-            produced.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+            produced
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
         ));
         let snapshot = fs::copy(&produced, &backup)
             .map_err(|e| PipelineError::Io(format!("cannot snapshot clean output: {e}")));
         let response: Result<ApplyResponse, String> = match snapshot {
             Err(e) => Err(e.to_string()),
-            Ok(_) => sj.rt.apply(&sj.options, &sj.job_seed, selection_id, &produced, &ext, &originals),
+            Ok(_) => sj.rt.apply(
+                &sj.options,
+                &sj.job_seed,
+                selection_id,
+                &produced,
+                &ext,
+                &originals,
+            ),
         };
         match response {
             Ok(resp) if resp.ok && resp.synthetic_state == "applied_verified" => {
@@ -368,7 +409,6 @@ pub fn clean_one_tracked(
 
     Ok(CleanOutcome {
         final_path,
-        mimetype: pre.mimetype.clone(),
         pre_metadata: pre.entries.clone(),
         post_metadata: post.entries.clone(),
         clean_output: cleaned,
@@ -416,12 +456,17 @@ pub fn clean_one_inplace(
     }
     if !pre.supported {
         return Err(PipelineError::Unsupported(
-            pre.mimetype.clone().unwrap_or_else(|| "unknown format".into()),
+            pre.mimetype
+                .clone()
+                .unwrap_or_else(|| "unknown format".into()),
         ));
     }
 
     check_cancel(PipelinePhase::Processing)?;
-    let cleaned = match rt.clean_cancellable(source, opts, cancel).map_err(PipelineError::Io)? {
+    let cleaned = match rt
+        .clean_cancellable(source, opts, cancel)
+        .map_err(PipelineError::Io)?
+    {
         crate::mat2_runner::CleanRunOutcome::Completed(out) => out,
         crate::mat2_runner::CleanRunOutcome::Cancelled => return Err(PipelineError::Cancelled),
     };
@@ -435,21 +480,22 @@ pub fn clean_one_inplace(
     }
 
     check_cancel(PipelinePhase::Verifying)?;
-    let md = fs::symlink_metadata(source).map_err(|_| {
-        PipelineError::OutputMissing("modified source disappeared".to_string())
-    })?;
+    let md = fs::symlink_metadata(source)
+        .map_err(|_| PipelineError::OutputMissing("modified source disappeared".to_string()))?;
     if md.file_type().is_symlink() || !md.file_type().is_file() {
         return Err(PipelineError::OutputInvalid(
             "modified source is not a regular file".into(),
         ));
     }
     if md.len() == 0 {
-        return Err(PipelineError::OutputInvalid("modified source is empty".into()));
+        return Err(PipelineError::OutputInvalid(
+            "modified source is empty".into(),
+        ));
     }
 
-    let post = rt.inspect_json(source).map_err(|_| {
-        PipelineError::OutputInvalid("post-inspection could not complete".into())
-    })?;
+    let post = rt
+        .inspect_json(source)
+        .map_err(|_| PipelineError::OutputInvalid("post-inspection could not complete".into()))?;
     if post.error.is_some() || !post.supported {
         return Err(PipelineError::OutputInvalid(
             "post-inspection could not complete".into(),
@@ -461,7 +507,6 @@ pub fn clean_one_inplace(
 
     Ok(CleanOutcome {
         final_path: source.to_path_buf(),
-        mimetype: pre.mimetype.clone(),
         pre_metadata: pre.entries.clone(),
         post_metadata: post.entries.clone(),
         clean_output: cleaned,
@@ -601,18 +646,17 @@ pub fn run_job(
                 for r in &results {
                     events.status(&r.id, FileStatus::Failed);
                 }
-                return JobReport { results, cancelled: false };
+                return JobReport {
+                    results,
+                    cancelled: false,
+                };
             }
         }
     };
 
     // Synthetic add-on: memory-only CSPRNG job seed (HANDOFF §8); inert when
     // disabled or when the destructive in-place mode is active.
-    let synth_enabled = settings
-        .synthetic
-        .map(|s| s.enabled)
-        .unwrap_or(false)
-        && !settings.inplace;
+    let synth_enabled = settings.synthetic.map(|s| s.enabled).unwrap_or(false) && !settings.inplace;
     let synth_job = match (synth_enabled, synth_rt) {
         (true, Some(srt)) => Some(SynthJob {
             rt: srt,
@@ -643,7 +687,11 @@ pub fn run_job(
 
     for item in &items {
         if cancel.load(Ordering::SeqCst) {
-            let r = base_result(item, FileStatus::Cancelled, "Cancelled before processing".into());
+            let r = base_result(
+                item,
+                FileStatus::Cancelled,
+                "Cancelled before processing".into(),
+            );
             events.status(&item.id, FileStatus::Cancelled);
             events.file_result(&r, None);
             results.push(r);
@@ -662,17 +710,35 @@ pub fn run_job(
             };
             events.status(&id_for_events, st);
             match phase {
-                PipelinePhase::Inspecting => log_line(events, &format!("Inspecting source of {} with MAT2", item.display_name)),
+                PipelinePhase::Inspecting => log_line(
+                    events,
+                    &format!("Inspecting source of {} with MAT2", item.display_name),
+                ),
                 PipelinePhase::Processing => {
                     let msg = if settings.inplace {
-                        format!("Running MAT2 IN PLACE on {} (original will be modified)", item.display_name)
+                        format!(
+                            "Running MAT2 IN PLACE on {} (original will be modified)",
+                            item.display_name
+                        )
                     } else {
-                        format!("Creating private staging copy and running MAT2 on {}", item.display_name)
+                        format!(
+                            "Creating private staging copy and running MAT2 on {}",
+                            item.display_name
+                        )
                     };
                     log_line(events, &msg)
                 }
-                PipelinePhase::Verifying => log_line(events, &format!("Verifying output of {} with MAT2", item.display_name)),
-                PipelinePhase::SyntheticWriting => log_line(events, &format!("Writing synthetic metadata to cleaned output of {}", item.display_name)),
+                PipelinePhase::Verifying => log_line(
+                    events,
+                    &format!("Verifying output of {} with MAT2", item.display_name),
+                ),
+                PipelinePhase::SyntheticWriting => log_line(
+                    events,
+                    &format!(
+                        "Writing synthetic metadata to cleaned output of {}",
+                        item.display_name
+                    ),
+                ),
             }
             Ok(())
         };
@@ -682,11 +748,13 @@ pub fn run_job(
         } else {
             let root_base = match (&item.relative_path, &mode) {
                 (_, OutputMode::Custom(root)) => root.clone(),
-                (Some(rel), OutputMode::BesideSource) => {
-                    batch_root_of(&item.path, rel).unwrap_or_else(|| {
-                        item.path.parent().map(PathBuf::from).unwrap_or_else(|| item.path.clone())
-                    })
-                }
+                (Some(rel), OutputMode::BesideSource) => batch_root_of(&item.path, rel)
+                    .unwrap_or_else(|| {
+                        item.path
+                            .parent()
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|| item.path.clone())
+                    }),
                 (None, OutputMode::BesideSource) => item
                     .path
                     .parent()
@@ -713,10 +781,7 @@ pub fn run_job(
                 }
             };
 
-            let relative_dir = item
-                .relative_path
-                .as_deref()
-                .and_then(relative_dir_of);
+            let relative_dir = item.relative_path.as_deref().and_then(relative_dir_of);
 
             clean_one_tracked(
                 rt,
@@ -735,7 +800,12 @@ pub fn run_job(
         let result = match outcome {
             Ok(o) => {
                 if settings.verbose {
-                    for line in o.clean_output.stderr.lines().chain(o.clean_output.stdout.lines()) {
+                    for line in o
+                        .clean_output
+                        .stderr
+                        .lines()
+                        .chain(o.clean_output.stdout.lines())
+                    {
                         if !line.trim().is_empty() {
                             log_line(events, &format!("mat2: {line}"));
                         }
@@ -744,24 +814,57 @@ pub fn run_job(
                 let diffs = diff_metadata(&o.pre_metadata, &o.post_metadata);
                 let summary = summarize(&diffs, o.pre_metadata.len());
                 if settings.inplace {
-                    log_line(events, &format!("MAT2 modified {} in place", item.display_name));
+                    log_line(
+                        events,
+                        &format!("MAT2 modified {} in place", item.display_name),
+                    );
                 } else {
-                    log_line(events, &format!("MAT2 output created for {}", item.display_name));
-                    log_line(events, &format!("Committed output for {}", item.display_name));
+                    log_line(
+                        events,
+                        &format!("MAT2 output created for {}", item.display_name),
+                    );
+                    log_line(
+                        events,
+                        &format!("Committed output for {}", item.display_name),
+                    );
                 }
                 let (mut status, mut detail) = if o.post_metadata.is_empty() {
-                    log_line(events, &format!("Result: 0 metadata fields detectable by MAT2 in {}", item.display_name));
-                    (FileStatus::Processed, "No metadata detectable by MAT2".to_string())
+                    log_line(
+                        events,
+                        &format!(
+                            "Result: 0 metadata fields detectable by MAT2 in {}",
+                            item.display_name
+                        ),
+                    );
+                    (
+                        FileStatus::Processed,
+                        "No metadata detectable by MAT2".to_string(),
+                    )
                 } else {
                     let n = o.post_metadata.len();
-                    log_line(events, &format!("Result: {n} metadata fields still detectable by MAT2 in {}", item.display_name));
-                    (FileStatus::Warning, format!("MAT2 still detects {n} metadata fields"))
+                    log_line(
+                        events,
+                        &format!(
+                            "Result: {n} metadata fields still detectable by MAT2 in {}",
+                            item.display_name
+                        ),
+                    );
+                    (
+                        FileStatus::Warning,
+                        format!("MAT2 still detects {n} metadata fields"),
+                    )
                 };
 
                 let mut synthetic_note: Option<String> = None;
                 match o.synthetic.state {
                     SyntheticState::AppliedVerified => {
-                        log_line(events, &format!("Synthetic metadata added and verified for {}", item.display_name));
+                        log_line(
+                            events,
+                            &format!(
+                                "Synthetic metadata added and verified for {}",
+                                item.display_name
+                            ),
+                        );
                         detail = if o.post_metadata.is_empty() {
                             "Original identifying metadata removed. Synthetic metadata added and verified.".to_string()
                         } else {
@@ -770,8 +873,18 @@ pub fn run_job(
                     }
                     SyntheticState::FailedKeptClean => {
                         status = FileStatus::Warning;
-                        let note = o.synthetic.note.clone().unwrap_or_else(|| "unknown error".into());
-                        log_line(events, &format!("Synthetic metadata could not be applied for {} ({note}); clean output kept", item.display_name));
+                        let note = o
+                            .synthetic
+                            .note
+                            .clone()
+                            .unwrap_or_else(|| "unknown error".into());
+                        log_line(
+                            events,
+                            &format!(
+                                "Synthetic metadata could not be applied for {} ({note}); clean output kept",
+                                item.display_name
+                            ),
+                        );
                         detail = "MAT2 cleaning succeeded. Synthetic metadata could not be applied. Clean output is available.".to_string();
                         synthetic_note = Some(sanitize(&note));
                     }
@@ -801,17 +914,24 @@ pub fn run_job(
                 results.push(r);
                 continue;
             }
-            Err(PipelineError::Cancelled) => {
-                base_result(item, FileStatus::Cancelled, "Cancelled during processing".into())
-            }
+            Err(PipelineError::Cancelled) => base_result(
+                item,
+                FileStatus::Cancelled,
+                "Cancelled during processing".into(),
+            ),
             Err(PipelineError::Unsupported(m)) => base_result(
                 item,
                 FileStatus::Unsupported,
-                sanitize(&format!("MAT2 does not support this format ({m}); not processed")),
+                sanitize(&format!(
+                    "MAT2 does not support this format ({m}); not processed"
+                )),
             ),
             Err(e) => base_result(item, FileStatus::Failed, sanitize(&e.to_string())),
         };
-        log_line(events, &format!("{}: {}", result.display_name, result.detail));
+        log_line(
+            events,
+            &format!("{}: {}", result.display_name, result.detail),
+        );
         events.status(&item.id, result.status);
         events.file_result(&result, None);
         results.push(result);
@@ -844,7 +964,10 @@ mod tests {
     }
 
     fn project_root() -> &'static Path {
-        Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap()
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap()
     }
 
     fn tempdir(tag: &str) -> PathBuf {
@@ -852,7 +975,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let p = std::env::temp_dir().join(format!("mat2job-{}-{}-{}", tag, std::process::id(), nanos));
+        let p =
+            std::env::temp_dir().join(format!("mat2job-{}-{}-{}", tag, std::process::id(), nanos));
         fs::create_dir_all(&p).unwrap();
         fs::canonicalize(&p).unwrap()
     }
@@ -864,15 +988,17 @@ mod tests {
     #[derive(Default)]
     struct MockEvents {
         records: Mutex<Vec<Recorded>>,
-        on_result: Mutex<Option<Box<dyn Fn(&FileJobResult) + Send>>>,
-        on_status: Mutex<Option<Box<dyn Fn(&str, FileStatus) + Send>>>,
+        on_result: Mutex<Option<ResultHook>>,
+        on_status: Mutex<Option<StatusHook>>,
     }
+
+    type ResultHook = Box<dyn Fn(&FileJobResult) + Send>;
+    type StatusHook = Box<dyn Fn(&str, FileStatus) + Send>;
 
     #[derive(Clone, Debug)]
     enum Recorded {
         Status(String, FileStatus),
         Log(String),
-        Result(FileJobResult),
     }
 
     impl MockEvents {
@@ -883,17 +1009,6 @@ mod tests {
                 .iter()
                 .filter_map(|r| match r {
                     Recorded::Status(id, s) => Some((id.clone(), *s)),
-                    _ => None,
-                })
-                .collect()
-        }
-        fn results(&self) -> Vec<FileJobResult> {
-            self.records
-                .lock()
-                .unwrap()
-                .iter()
-                .filter_map(|r| match r {
-                    Recorded::Result(res) => Some(res.clone()),
                     _ => None,
                 })
                 .collect()
@@ -922,22 +1037,32 @@ mod tests {
             if let Some(f) = self.on_status.lock().unwrap().as_ref() {
                 f(id, status);
             }
-            self.records.lock().unwrap().push(Recorded::Status(id.to_string(), status));
+            self.records
+                .lock()
+                .unwrap()
+                .push(Recorded::Status(id.to_string(), status));
         }
         fn log(&self, line: &str) {
-            self.records.lock().unwrap().push(Recorded::Log(line.to_string()));
+            self.records
+                .lock()
+                .unwrap()
+                .push(Recorded::Log(line.to_string()));
         }
         fn file_result(&self, result: &FileJobResult, _final_path: Option<&Path>) {
             if let Some(f) = self.on_result.lock().unwrap().as_ref() {
                 f(result);
             }
-            self.records.lock().unwrap().push(Recorded::Result(result.clone()));
         }
     }
 
     fn item(id: &str, path: PathBuf) -> JobItem {
         let display_name = path.file_name().unwrap().to_string_lossy().into_owned();
-        JobItem { id: id.to_string(), path, display_name, relative_path: None }
+        JobItem {
+            id: id.to_string(),
+            path,
+            display_name,
+            relative_path: None,
+        }
     }
 
     #[test]
@@ -989,21 +1114,35 @@ mod tests {
         let ws = JobWorkspace::create().unwrap();
         let root = job_root(&OutputMode::BesideSource, &dir, &output::timestamp_now()).unwrap();
         let canonical = ensure_root(&root).unwrap();
-        let outcome = clean_one(&rt, &ws, &src, &CleanOptions::default(), &canonical, None).unwrap();
+        let outcome =
+            clean_one(&rt, &ws, &src, &CleanOptions::default(), &canonical, None).unwrap();
 
         assert!(outcome.final_path.starts_with(&canonical));
         assert_eq!(outcome.final_path.file_name().unwrap(), "dirty.cleaned.jpg");
         assert!(fs::metadata(&outcome.final_path).unwrap().len() > 0);
-        assert!(outcome.post_metadata.is_empty(), "post: {:?}", outcome.post_metadata);
-        assert!(outcome
-            .pre_metadata
-            .iter()
-            .any(|e| e.key == "Comment" && e.display_value == "Created with GIMP"));
-        assert_eq!(sha256_file(&src).unwrap(), before, "source must be unchanged");
+        assert!(
+            outcome.post_metadata.is_empty(),
+            "post: {:?}",
+            outcome.post_metadata
+        );
+        assert!(
+            outcome
+                .pre_metadata
+                .iter()
+                .any(|e| e.key == "Comment" && e.display_value == "Created with GIMP")
+        );
+        assert_eq!(
+            sha256_file(&src).unwrap(),
+            before,
+            "source must be unchanged"
+        );
 
         ws.cleanup();
         assert!(!ws.exists(), "workspace must be removed");
-        assert!(outcome.final_path.exists(), "committed output survives workspace cleanup");
+        assert!(
+            outcome.final_path.exists(),
+            "committed output survives workspace cleanup"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1018,10 +1157,18 @@ mod tests {
         let root = job_root(&OutputMode::BesideSource, &dir, &output::timestamp_now()).unwrap();
         let canonical = ensure_root(&root).unwrap();
         let err = clean_one(&rt, &ws, &weird, &CleanOptions::default(), &canonical, None);
-        assert!(matches!(err, Err(PipelineError::Unsupported(_))), "got {:?}", err);
+        assert!(
+            matches!(err, Err(PipelineError::Unsupported(_))),
+            "got {:?}",
+            err
+        );
 
         let leftovers: Vec<_> = walkdir_flat(&canonical);
-        assert!(leftovers.is_empty(), "no final output may exist: {:?}", leftovers);
+        assert!(
+            leftovers.is_empty(),
+            "no final output may exist: {:?}",
+            leftovers
+        );
         assert!(!dir.join("notes.unknownext123.cleaned").exists());
         ws.cleanup();
         fs::remove_dir_all(&dir).unwrap();
@@ -1040,7 +1187,11 @@ mod tests {
         let err = clean_one(&rt, &ws, &fake, &CleanOptions::default(), &canonical, None);
         assert!(err.is_err(), "corrupt file must fail");
         let leftovers = walkdir_flat(&canonical);
-        assert!(leftovers.is_empty(), "no output on failure: {:?}", leftovers);
+        assert!(
+            leftovers.is_empty(),
+            "no output on failure: {:?}",
+            leftovers
+        );
         ws.cleanup();
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1061,8 +1212,15 @@ mod tests {
         let second = clean_one(&rt, &ws, &src, &CleanOptions::default(), &canonical, None).unwrap();
 
         assert_eq!(first.final_path.file_name().unwrap(), "dirty.cleaned.png");
-        assert_eq!(second.final_path.file_name().unwrap(), "dirty.cleaned-2.png");
-        assert_eq!(fs::read(&first.final_path).unwrap(), first_bytes, "first output untouched");
+        assert_eq!(
+            second.final_path.file_name().unwrap(),
+            "dirty.cleaned-2.png"
+        );
+        assert_eq!(
+            fs::read(&first.final_path).unwrap(),
+            first_bytes,
+            "first output untouched"
+        );
         ws.cleanup();
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1080,17 +1238,26 @@ mod tests {
         let root = job_root(&OutputMode::BesideSource, &dir, "2026-01-01_000001").unwrap();
         let canonical = ensure_root(&root).unwrap();
 
-        let committed = clean_one(&rt, &ws, &a, &CleanOptions::default(), &canonical, None).unwrap();
+        let committed =
+            clean_one(&rt, &ws, &a, &CleanOptions::default(), &canonical, None).unwrap();
 
         let stage = ws.stage_dir().unwrap();
         let staged_b = stage.join("dirty.png");
         fs::copy(&b, &staged_b).unwrap();
         ws.cleanup();
 
-        assert!(committed.final_path.exists(), "committed output survives cancellation");
+        assert!(
+            committed.final_path.exists(),
+            "committed output survives cancellation"
+        );
         assert!(!ws.exists(), "workspace including staged file removed");
         let leftovers = walkdir_flat(&canonical);
-        assert_eq!(leftovers.len(), 1, "only the committed file may exist: {:?}", leftovers);
+        assert_eq!(
+            leftovers.len(),
+            1,
+            "only the committed file may exist: {:?}",
+            leftovers
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1103,7 +1270,10 @@ mod tests {
         let ws = JobWorkspace::create().unwrap();
         let root = job_root(&OutputMode::BesideSource, &dir, &output::timestamp_now()).unwrap();
         let canonical = ensure_root(&root).unwrap();
-        let opts = CleanOptions { inplace: true, ..Default::default() };
+        let opts = CleanOptions {
+            inplace: true,
+            ..Default::default()
+        };
         let err = clean_one(&rt, &ws, &src, &opts, &canonical, None);
         assert!(matches!(err, Err(PipelineError::Io(_))));
         ws.cleanup();
@@ -1124,15 +1294,33 @@ mod tests {
 
         let events = MockEvents::default();
         let cancel = AtomicBool::new(false);
-        let report = run_job(&rt, vec![item("id-a", a.clone()), item("id-b", b.clone())], &JobSettings::default(), &events, &cancel, None);
+        let report = run_job(
+            &rt,
+            vec![item("id-a", a.clone()), item("id-b", b.clone())],
+            &JobSettings::default(),
+            &events,
+            &cancel,
+            None,
+        );
 
         assert!(!report.cancelled);
         assert_eq!(report.results.len(), 2);
-        assert!(report.results.iter().all(|r| r.status == FileStatus::Processed), "{:?}", report.results);
+        assert!(
+            report
+                .results
+                .iter()
+                .all(|r| r.status == FileStatus::Processed),
+            "{:?}",
+            report.results
+        );
 
         // strict sequential ladder: file A reaches terminal status before B starts inspecting
         let st = events.statuses();
-        let pos = |id: &str, s: FileStatus| st.iter().position(|(i, x)| i == id && *x == s).expect("missing transition");
+        let pos = |id: &str, s: FileStatus| {
+            st.iter()
+                .position(|(i, x)| i == id && *x == s)
+                .expect("missing transition")
+        };
         assert!(pos("id-a", FileStatus::Processed) < pos("id-b", FileStatus::Inspecting));
         for id in ["id-a", "id-b"] {
             assert!(pos(id, FileStatus::Queued) < pos(id, FileStatus::Inspecting));
@@ -1143,7 +1331,12 @@ mod tests {
 
         // diff content: jpg comment removed
         let res_a = report.results.iter().find(|r| r.id == "id-a").unwrap();
-        assert!(res_a.diffs.iter().any(|d| d.key == "Comment" && d.status == crate::model::DiffStatus::Removed));
+        assert!(
+            res_a
+                .diffs
+                .iter()
+                .any(|d| d.key == "Comment" && d.status == crate::model::DiffStatus::Removed)
+        );
         assert_eq!(res_a.summary.unwrap().still_detectable, 0);
 
         // outputs inside <dir>/MAT2 Output/<ts>/, sources untouched
@@ -1154,9 +1347,17 @@ mod tests {
 
         // no ANSI/control chars in any log line; logs mention both files
         for l in events.logs() {
-            assert!(!l.chars().any(|c| (c as u32) < 0x20 && c != '\n' && c != '\t'));
+            assert!(
+                !l.chars()
+                    .any(|c| (c as u32) < 0x20 && c != '\n' && c != '\t')
+            );
         }
-        assert!(events.logs().iter().any(|l| l.contains("Committed output for one.jpg")));
+        assert!(
+            events
+                .logs()
+                .iter()
+                .any(|l| l.contains("Committed output for one.jpg"))
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1170,7 +1371,14 @@ mod tests {
         fs::write(&weird, b"hello").unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("g", good.clone()), item("w", weird.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
+        let report = run_job(
+            &rt,
+            vec![item("g", good.clone()), item("w", weird.clone())],
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
 
         let g = report.results.iter().find(|r| r.id == "g").unwrap();
         let w = report.results.iter().find(|r| r.id == "w").unwrap();
@@ -1185,7 +1393,11 @@ mod tests {
     #[test]
     fn run_job_warns_when_metadata_remains() {
         let Some(rt) = runtime_or_skip() else { return };
-        if std::process::Command::new("ffmpeg").arg("-version").output().is_err() {
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
             eprintln!("SKIP: ffmpeg unavailable for mp4 warning case");
             return;
         }
@@ -1194,7 +1406,14 @@ mod tests {
         fs::copy(fixture("dirty.mp4"), &vid).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("v", vid)], &JobSettings::default(), &events, &AtomicBool::new(false), None);
+        let report = run_job(
+            &rt,
+            vec![item("v", vid)],
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
         let v = &report.results[0];
         assert_eq!(v.status, FileStatus::Warning, "{:?}", v);
         assert!(v.summary.unwrap().still_detectable > 0);
@@ -1211,11 +1430,20 @@ mod tests {
 
         let events = MockEvents::default();
         let cancel = AtomicBool::new(true);
-        let report = run_job(&rt, vec![item("a", a.clone())], &JobSettings::default(), &events, &cancel, None);
+        let report = run_job(
+            &rt,
+            vec![item("a", a.clone())],
+            &JobSettings::default(),
+            &events,
+            &cancel,
+            None,
+        );
         assert!(report.cancelled);
         assert_eq!(report.results[0].status, FileStatus::Cancelled);
-        assert!(!dir.join(crate::output::OUTPUT_DIR_NAME).join("").exists()
-            || walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
+        assert!(
+            !dir.join(crate::output::OUTPUT_DIR_NAME).join("").exists()
+                || walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty()
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1237,7 +1465,14 @@ mod tests {
             }
         });
 
-        let report = run_job(&rt, vec![item("a", a), item("b", b)], &JobSettings::default(), &events, &cancel, None);
+        let report = run_job(
+            &rt,
+            vec![item("a", a), item("b", b)],
+            &JobSettings::default(),
+            &events,
+            &cancel,
+            None,
+        );
         assert!(report.cancelled);
         let ra = report.results.iter().find(|r| r.id == "a").unwrap();
         let rb = report.results.iter().find(|r| r.id == "b").unwrap();
@@ -1258,10 +1493,24 @@ mod tests {
         fs::remove_file(&a).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false), None);
+        let report = run_job(
+            &rt,
+            items,
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
         assert_eq!(report.results[0].status, FileStatus::Failed);
-        assert!(report.results[0].detail.to_lowercase().contains("missing")
-            || report.results[0].detail.to_lowercase().contains("unreadable"), "{}", report.results[0].detail);
+        assert!(
+            report.results[0].detail.to_lowercase().contains("missing")
+                || report.results[0]
+                    .detail
+                    .to_lowercase()
+                    .contains("unreadable"),
+            "{}",
+            report.results[0].detail
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1277,8 +1526,20 @@ mod tests {
         fs::set_permissions(&a, perms).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("a", a.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
-        assert_eq!(report.results[0].status, FileStatus::Failed, "{:?}", report.results[0]);
+        let report = run_job(
+            &rt,
+            vec![item("a", a.clone())],
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
+        assert_eq!(
+            report.results[0].status,
+            FileStatus::Failed,
+            "{:?}",
+            report.results[0]
+        );
 
         let mut perms = fs::metadata(&a).unwrap().permissions();
         perms.set_mode(0o644);
@@ -1294,7 +1555,14 @@ mod tests {
         fs::write(&a, b"definitely not a jpeg").unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("a", a)], &JobSettings::default(), &events, &AtomicBool::new(false), None);
+        let report = run_job(
+            &rt,
+            vec![item("a", a)],
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
         let r = &report.results[0];
         assert_eq!(r.status, FileStatus::Failed);
         assert_ne!(r.status, FileStatus::Processed);
@@ -1310,11 +1578,24 @@ mod tests {
         let a = src_dir.join("a.jpg");
         fs::copy(fixture("dirty.jpg"), &a).unwrap();
 
-        let settings = JobSettings { custom_output_root: Some(out_dir.clone()), ..Default::default() };
+        let settings = JobSettings {
+            custom_output_root: Some(out_dir.clone()),
+            ..Default::default()
+        };
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("a", a)], &settings, &events, &AtomicBool::new(false), None);
+        let report = run_job(
+            &rt,
+            vec![item("a", a)],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
         assert_eq!(report.results[0].status, FileStatus::Processed);
-        assert!(!src_dir.join(crate::output::OUTPUT_DIR_NAME).exists(), "nothing beside source in custom mode");
+        assert!(
+            !src_dir.join(crate::output::OUTPUT_DIR_NAME).exists(),
+            "nothing beside source in custom mode"
+        );
         let outputs = walkdir_flat(&out_dir);
         assert_eq!(outputs.len(), 1, "{:?}", outputs);
         assert!(outputs[0].starts_with(&out_dir));
@@ -1347,21 +1628,51 @@ mod tests {
             },
         ];
         let events = MockEvents::default();
-        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false), None);
-        assert!(report.results.iter().all(|r| r.status == FileStatus::Processed), "{:?}", report.results);
+        let report = run_job(
+            &rt,
+            items,
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
+        assert!(
+            report
+                .results
+                .iter()
+                .all(|r| r.status == FileStatus::Processed),
+            "{:?}",
+            report.results
+        );
 
         let out_root = batch.join(crate::output::OUTPUT_DIR_NAME);
         let outputs = walkdir_flat(&out_root);
         assert_eq!(outputs.len(), 2, "{:?}", outputs);
-        assert!(outputs.iter().any(|p| p.ends_with("photos/2026/deep.cleaned.png")), "{:?}", outputs);
-        assert!(outputs.iter().any(|p| p.file_name().unwrap() == "top.cleaned.jpg"), "{:?}", outputs);
+        assert!(
+            outputs
+                .iter()
+                .any(|p| p.ends_with("photos/2026/deep.cleaned.png")),
+            "{:?}",
+            outputs
+        );
+        assert!(
+            outputs
+                .iter()
+                .any(|p| p.file_name().unwrap() == "top.cleaned.jpg"),
+            "{:?}",
+            outputs
+        );
         fs::remove_dir_all(&batch).unwrap();
     }
 
     #[test]
     fn cancel_during_clean_kills_child_and_keeps_committed() {
         let Some(rt) = runtime_or_skip() else { return };
-        if std::process::Command::new("ffmpeg").arg("-version").output().is_err() {
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
             eprintln!("SKIP: ffmpeg unavailable for mp4 cancel window");
             return;
         }
@@ -1396,21 +1707,45 @@ mod tests {
 
         assert!(report.cancelled);
         let get = |id: &str| report.results.iter().find(|r| r.id == id).unwrap();
-        assert_eq!(get("j").status, FileStatus::Processed, "earlier committed file survives");
-        assert_eq!(get("m").status, FileStatus::Cancelled, "in-flight file cancelled");
-        assert_eq!(get("p").status, FileStatus::Cancelled, "later file never starts");
+        assert_eq!(
+            get("j").status,
+            FileStatus::Processed,
+            "earlier committed file survives"
+        );
+        assert_eq!(
+            get("m").status,
+            FileStatus::Cancelled,
+            "in-flight file cancelled"
+        );
+        assert_eq!(
+            get("p").status,
+            FileStatus::Cancelled,
+            "later file never starts"
+        );
 
         // p must never have entered the pipeline
         let st = events.statuses();
-        assert!(!st.iter().any(|(id, s)| id == "p" && *s == FileStatus::Inspecting));
+        assert!(
+            !st.iter()
+                .any(|(id, s)| id == "p" && *s == FileStatus::Inspecting)
+        );
 
         // only j's output committed
         let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
         assert_eq!(outputs.len(), 1, "{:?}", outputs);
-        assert!(outputs[0].file_name().unwrap().to_string_lossy().contains("j.cleaned"));
+        assert!(
+            outputs[0]
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("j.cleaned")
+        );
 
         // child termination was prompt, not a full mp4 clean
-        assert!(elapsed.as_secs() < 30, "cancel should short-circuit: {elapsed:?}");
+        assert!(
+            elapsed.as_secs() < 30,
+            "cancel should short-circuit: {elapsed:?}"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1423,8 +1758,13 @@ mod tests {
 
         let cancel = AtomicBool::new(true);
         let started = std::time::Instant::now();
-        let outcome = rt.clean_cancellable(&staged, &CleanOptions::default(), &cancel).unwrap();
-        assert!(matches!(outcome, crate::mat2_runner::CleanRunOutcome::Cancelled));
+        let outcome = rt
+            .clean_cancellable(&staged, &CleanOptions::default(), &cancel)
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            crate::mat2_runner::CleanRunOutcome::Cancelled
+        ));
         assert!(started.elapsed().as_secs() < 5, "must return promptly");
         assert!(!crate::mat2_runner::expected_cleaned_path(&staged).exists());
         fs::remove_dir_all(&dir).unwrap();
@@ -1439,21 +1779,45 @@ mod tests {
         let before = sha256_file(&src).unwrap();
 
         let events = MockEvents::default();
-        let settings = JobSettings { inplace: true, ..Default::default() };
-        let report = run_job(&rt, vec![item("a", src.clone())], &settings, &events, &AtomicBool::new(false), None);
+        let settings = JobSettings {
+            inplace: true,
+            ..Default::default()
+        };
+        let report = run_job(
+            &rt,
+            vec![item("a", src.clone())],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
 
         let r = &report.results[0];
         assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
-        assert!(r.diffs.iter().any(|d| d.key == "Comment"
-            && d.status == crate::model::DiffStatus::Removed));
-        assert_ne!(sha256_file(&src).unwrap(), before, "source must be modified in place");
+        assert!(
+            r.diffs
+                .iter()
+                .any(|d| d.key == "Comment" && d.status == crate::model::DiffStatus::Removed)
+        );
+        assert_ne!(
+            sha256_file(&src).unwrap(),
+            before,
+            "source must be modified in place"
+        );
         assert!(src.exists(), "source path must still exist");
-        assert!(!dir.join(crate::output::OUTPUT_DIR_NAME).exists(), "in-place creates no output dir");
+        assert!(
+            !dir.join(crate::output::OUTPUT_DIR_NAME).exists(),
+            "in-place creates no output dir"
+        );
         let stray: Vec<_> = walkdir_flat(&dir)
             .into_iter()
             .filter(|p| p != &src)
             .collect();
-        assert!(stray.is_empty(), "no extra files beside the source: {:?}", stray);
+        assert!(
+            stray.is_empty(),
+            "no extra files beside the source: {:?}",
+            stray
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1466,11 +1830,25 @@ mod tests {
         let before = sha256_file(&weird).unwrap();
 
         let events = MockEvents::default();
-        let settings = JobSettings { inplace: true, ..Default::default() };
-        let report = run_job(&rt, vec![item("w", weird.clone())], &settings, &events, &AtomicBool::new(false), None);
+        let settings = JobSettings {
+            inplace: true,
+            ..Default::default()
+        };
+        let report = run_job(
+            &rt,
+            vec![item("w", weird.clone())],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
 
         assert_eq!(report.results[0].status, FileStatus::Unsupported);
-        assert_eq!(sha256_file(&weird).unwrap(), before, "unsupported source must be untouched");
+        assert_eq!(
+            sha256_file(&weird).unwrap(),
+            before,
+            "unsupported source must be untouched"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1483,12 +1861,26 @@ mod tests {
         let before = sha256_file(&src).unwrap();
 
         let events = MockEvents::default();
-        let settings = JobSettings { inplace: true, ..Default::default() };
+        let settings = JobSettings {
+            inplace: true,
+            ..Default::default()
+        };
         let cancel = AtomicBool::new(true);
-        let report = run_job(&rt, vec![item("a", src.clone())], &settings, &events, &cancel, None);
+        let report = run_job(
+            &rt,
+            vec![item("a", src.clone())],
+            &settings,
+            &events,
+            &cancel,
+            None,
+        );
 
         assert_eq!(report.results[0].status, FileStatus::Cancelled);
-        assert_eq!(sha256_file(&src).unwrap(), before, "cancelled source must be untouched");
+        assert_eq!(
+            sha256_file(&src).unwrap(),
+            before,
+            "cancelled source must be untouched"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1498,7 +1890,13 @@ mod tests {
         let dir = tempdir("inplace-guard");
         let src = dir.join("dirty.jpg");
         fs::copy(fixture("dirty.jpg"), &src).unwrap();
-        let err = clean_one_inplace(&rt, &src, &CleanOptions::default(), &AtomicBool::new(false), &|_| Ok(()));
+        let err = clean_one_inplace(
+            &rt,
+            &src,
+            &CleanOptions::default(),
+            &AtomicBool::new(false),
+            &|_| Ok(()),
+        );
         assert!(matches!(err, Err(PipelineError::Io(_))));
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1515,9 +1913,14 @@ mod tests {
             "<img src=x onerror=alert(1)>.jpg",
             "quote'and\"double.png",
             "ansi\u{1b}[31mred.jpg",
-        ];        let mut items = Vec::new();
+        ];
+        let mut items = Vec::new();
         for (i, name) in hostile_img_names.iter().enumerate() {
-            let fixture_src = if name.ends_with(".png") { fixture("dirty.png") } else { fixture("dirty.jpg") };
+            let fixture_src = if name.ends_with(".png") {
+                fixture("dirty.png")
+            } else {
+                fixture("dirty.jpg")
+            };
             let p = dir.join(name);
             fs::copy(&fixture_src, &p).unwrap();
             items.push(item(&format!("h{i}"), p));
@@ -1530,29 +1933,61 @@ mod tests {
         items.push(item("hpdf", script_pdf));
 
         let events = MockEvents::default();
-        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false), None);
+        let report = run_job(
+            &rt,
+            items,
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
 
         for r in &report.results {
             assert!(
                 r.status == FileStatus::Processed || r.status == FileStatus::Warning,
                 "hostile name {:?} should process as data, got {:?}: {}",
-                r.display_name, r.status, r.detail
+                r.display_name,
+                r.status,
+                r.detail
             );
         }
-        assert!(report.results.iter().any(|r| r.display_name == "--version.jpg"));
-        assert!(report.results.iter().any(|r| r.display_name == "<img src=x onerror=alert(1)>.jpg"));
-        assert!(report.results.iter().any(|r| r.display_name == "<script>alert(1)<\\script>.pdf"));
+        assert!(
+            report
+                .results
+                .iter()
+                .any(|r| r.display_name == "--version.jpg")
+        );
+        assert!(
+            report
+                .results
+                .iter()
+                .any(|r| r.display_name == "<img src=x onerror=alert(1)>.jpg")
+        );
+        assert!(
+            report
+                .results
+                .iter()
+                .any(|r| r.display_name == "<script>alert(1)<\\script>.pdf")
+        );
 
         // shell-injection evidence files must NOT exist anywhere
         for probe in ["owned", "owned2"] {
-            assert!(!dir.join(probe).exists(), "injection executed: {probe} created");
+            assert!(
+                !dir.join(probe).exists(),
+                "injection executed: {probe} created"
+            );
         }
         assert!(!std::env::current_dir().unwrap().join("owned").exists());
         assert!(!std::env::current_dir().unwrap().join("owned2").exists());
 
         // logs contain no ESC/control characters despite the ANSI filename
         for l in events.logs() {
-            assert!(!l.chars().any(|c| (c as u32) < 0x20 && c != '\n' && c != '\t'), "control char in log: {:?}", l);
+            assert!(
+                !l.chars()
+                    .any(|c| (c as u32) < 0x20 && c != '\n' && c != '\t'),
+                "control char in log: {:?}",
+                l
+            );
         }
 
         // outputs confined to the job output root
@@ -1575,12 +2010,26 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("l", link.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
+        let report = run_job(
+            &rt,
+            vec![item("l", link.clone())],
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
 
         let r = &report.results[0];
         assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
-        assert_eq!(sha256_file(&target).unwrap(), target_sha, "symlink target must be untouched");
-        assert!(link.symlink_metadata().unwrap().file_type().is_symlink(), "link itself must remain a link");
+        assert_eq!(
+            sha256_file(&target).unwrap(),
+            target_sha,
+            "symlink target must be untouched"
+        );
+        assert!(
+            link.symlink_metadata().unwrap().file_type().is_symlink(),
+            "link itself must remain a link"
+        );
         let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
         assert_eq!(outputs.len(), 1, "{:?}", outputs);
         fs::remove_dir_all(&dir).unwrap();
@@ -1608,25 +2057,56 @@ mod tests {
             needs: Option<(&'static str, bool)>,
         }
         let cases = vec![
-            Case { name: "dirty.jpg", expect_warning: false, needs: None },
-            Case { name: "dirty.png", expect_warning: false, needs: None },
+            Case {
+                name: "dirty.jpg",
+                expect_warning: false,
+                needs: None,
+            },
+            Case {
+                name: "dirty.png",
+                expect_warning: false,
+                needs: None,
+            },
             // 0.15.0 intentionally keeps structural fields in cleaned PDFs
             // (creation-date:-1, format:PDF-1.x, mod-date:-1 — "Don't change
             // the PDF version of cleaned files"); detectable => Warning, by design
-            Case { name: "dirty.pdf", expect_warning: true, needs: None },
-            Case { name: "dirty.docx", expect_warning: false, needs: None },
-            Case { name: "dirty.mp3", expect_warning: false, needs: None },
-            Case { name: "dirty.flac", expect_warning: false, needs: None },
-            Case { name: "dirty.mp4", expect_warning: true, needs: Some(("ffmpeg", has_ffmpeg)) },
+            Case {
+                name: "dirty.pdf",
+                expect_warning: true,
+                needs: None,
+            },
+            Case {
+                name: "dirty.docx",
+                expect_warning: false,
+                needs: None,
+            },
+            Case {
+                name: "dirty.mp3",
+                expect_warning: false,
+                needs: None,
+            },
+            Case {
+                name: "dirty.flac",
+                expect_warning: false,
+                needs: None,
+            },
+            Case {
+                name: "dirty.mp4",
+                expect_warning: true,
+                needs: Some(("ffmpeg", has_ffmpeg)),
+            },
         ];
 
         let mut ran = 0;
         for case in cases {
-            if let Some((tool, available)) = case.needs {
-                if !available {
-                    eprintln!("SKIP {}: optional dependency {} unavailable", case.name, tool);
-                    continue;
-                }
+            if let Some((tool, available)) = case.needs
+                && !available
+            {
+                eprintln!(
+                    "SKIP {}: optional dependency {} unavailable",
+                    case.name, tool
+                );
+                continue;
             }
             let dir = tempdir(&format!("fmt-{}", case.name.replace('.', "_")));
             let src = dir.join(case.name);
@@ -1634,21 +2114,59 @@ mod tests {
             let sha_before = sha256_file(&src).unwrap();
 
             let events = MockEvents::default();
-            let report = run_job(&rt, vec![item("f", src.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
+            let report = run_job(
+                &rt,
+                vec![item("f", src.clone())],
+                &JobSettings::default(),
+                &events,
+                &AtomicBool::new(false),
+                None,
+            );
             let r = &report.results[0];
 
-            let expected = if case.expect_warning { FileStatus::Warning } else { FileStatus::Processed };
-            assert_eq!(r.status, expected, "{} => {:?}: {}", case.name, r.status, r.detail);
-            assert_eq!(sha256_file(&src).unwrap(), sha_before, "{} source must be unchanged", case.name);
+            let expected = if case.expect_warning {
+                FileStatus::Warning
+            } else {
+                FileStatus::Processed
+            };
+            assert_eq!(
+                r.status, expected,
+                "{} => {:?}: {}",
+                case.name, r.status, r.detail
+            );
+            assert_eq!(
+                sha256_file(&src).unwrap(),
+                sha_before,
+                "{} source must be unchanged",
+                case.name
+            );
 
             let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
-            assert_eq!(outputs.len(), 1, "{} one committed output: {:?}", case.name, outputs);
-            assert!(fs::metadata(&outputs[0]).unwrap().len() > 0, "{} output non-empty", case.name);
+            assert_eq!(
+                outputs.len(),
+                1,
+                "{} one committed output: {:?}",
+                case.name,
+                outputs
+            );
+            assert!(
+                fs::metadata(&outputs[0]).unwrap().len() > 0,
+                "{} output non-empty",
+                case.name
+            );
             let summary = r.summary.expect("summary present");
             if case.expect_warning {
-                assert!(summary.still_detectable > 0, "{} should keep structural metadata", case.name);
+                assert!(
+                    summary.still_detectable > 0,
+                    "{} should keep structural metadata",
+                    case.name
+                );
             } else {
-                assert_eq!(summary.still_detectable, 0, "{} post: {:?}", case.name, r.diffs);
+                assert_eq!(
+                    summary.still_detectable, 0,
+                    "{} post: {:?}",
+                    case.name, r.diffs
+                );
             }
             ran += 1;
             fs::remove_dir_all(&dir).unwrap();
@@ -1661,16 +2179,33 @@ mod tests {
             fs::copy(fixture("dirty.png"), dir.join("member.png")).unwrap();
             let zip_path = dir.join("archive.zip");
             let status = std::process::Command::new("zip")
-                .arg("-j").arg(&zip_path).arg(dir.join("member.jpg")).arg(dir.join("member.png"))
-                .status().unwrap();
+                .arg("-j")
+                .arg(&zip_path)
+                .arg(dir.join("member.jpg"))
+                .arg(dir.join("member.png"))
+                .status()
+                .unwrap();
             assert!(status.success());
             fs::remove_file(dir.join("member.jpg")).unwrap();
             fs::remove_file(dir.join("member.png")).unwrap();
 
             let events = MockEvents::default();
-            let report = run_job(&rt, vec![item("z", zip_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
+            let report = run_job(
+                &rt,
+                vec![item("z", zip_path.clone())],
+                &JobSettings::default(),
+                &events,
+                &AtomicBool::new(false),
+                None,
+            );
             let r = &report.results[0];
-            assert_eq!(r.status, FileStatus::Processed, "zip => {:?}: {}", r.status, r.detail);
+            assert_eq!(
+                r.status,
+                FileStatus::Processed,
+                "zip => {:?}: {}",
+                r.status,
+                r.detail
+            );
             assert!(!walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
             fs::remove_dir_all(&dir).unwrap();
             ran += 1;
@@ -1684,15 +2219,33 @@ mod tests {
             let tar_path = dir.join("archive.tar");
             let status = std::process::Command::new("tar")
                 .env("COPYFILE_DISABLE", "1")
-                .arg("-cf").arg(&tar_path).arg("-C").arg(&dir).arg("member.jpg")
-                .status().unwrap();
+                .arg("-cf")
+                .arg(&tar_path)
+                .arg("-C")
+                .arg(&dir)
+                .arg("member.jpg")
+                .status()
+                .unwrap();
             assert!(status.success());
             fs::remove_file(dir.join("member.jpg")).unwrap();
 
             let events = MockEvents::default();
-            let report = run_job(&rt, vec![item("t", tar_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
+            let report = run_job(
+                &rt,
+                vec![item("t", tar_path.clone())],
+                &JobSettings::default(),
+                &events,
+                &AtomicBool::new(false),
+                None,
+            );
             let r = &report.results[0];
-            assert_eq!(r.status, FileStatus::Processed, "tar => {:?}: {}", r.status, r.detail);
+            assert_eq!(
+                r.status,
+                FileStatus::Processed,
+                "tar => {:?}: {}",
+                r.status,
+                r.detail
+            );
             fs::remove_dir_all(&dir).unwrap();
             ran += 1;
         } else {
@@ -1713,35 +2266,82 @@ mod tests {
         fs::write(dir.join("evil.py"), b"print('unsupported member')\n").unwrap();
         let zip_path = dir.join("mixed.zip");
         let status = std::process::Command::new("zip")
-            .arg("-j").arg(&zip_path).arg(dir.join("photo.jpg")).arg(dir.join("evil.py"))
-            .status().unwrap();
+            .arg("-j")
+            .arg(&zip_path)
+            .arg(dir.join("photo.jpg"))
+            .arg(dir.join("evil.py"))
+            .status()
+            .unwrap();
         assert!(status.success());
 
         // abort (default): unsupported member => clean fails, no output
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("a", zip_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
-        assert_eq!(report.results[0].status, FileStatus::Failed, "{:?}", report.results[0]);
+        let report = run_job(
+            &rt,
+            vec![item("a", zip_path.clone())],
+            &JobSettings::default(),
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
+        assert_eq!(
+            report.results[0].status,
+            FileStatus::Failed,
+            "{:?}",
+            report.results[0]
+        );
         assert!(walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
 
         // omit: unsupported member dropped => success
         let events = MockEvents::default();
-        let settings = JobSettings { unknown_members: crate::mat2_runner::UnknownMembers::Omit, ..Default::default() };
-        let report = run_job(&rt, vec![item("o", zip_path.clone())], &settings, &events, &AtomicBool::new(false), None);
+        let settings = JobSettings {
+            unknown_members: crate::mat2_runner::UnknownMembers::Omit,
+            ..Default::default()
+        };
+        let report = run_job(
+            &rt,
+            vec![item("o", zip_path.clone())],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
         assert!(
-            report.results[0].status == FileStatus::Processed || report.results[0].status == FileStatus::Warning,
-            "omit => {:?}", report.results[0]
+            report.results[0].status == FileStatus::Processed
+                || report.results[0].status == FileStatus::Warning,
+            "omit => {:?}",
+            report.results[0]
         );
 
         // keep: never a hard failure (may retain metadata => Warning allowed)
         let events = MockEvents::default();
-        let settings = JobSettings { unknown_members: crate::mat2_runner::UnknownMembers::Keep, ..Default::default() };
-        let report = run_job(&rt, vec![item("k", zip_path)], &settings, &events, &AtomicBool::new(false), None);
-        assert_ne!(report.results[0].status, FileStatus::Failed, "keep => {:?}", report.results[0]);
+        let settings = JobSettings {
+            unknown_members: crate::mat2_runner::UnknownMembers::Keep,
+            ..Default::default()
+        };
+        let report = run_job(
+            &rt,
+            vec![item("k", zip_path)],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            None,
+        );
+        assert_ne!(
+            report.results[0].status,
+            FileStatus::Failed,
+            "keep => {:?}",
+            report.results[0]
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
     fn synth_runtime_or_skip(rt: &Mat2Runtime) -> Option<crate::synthetic::SyntheticRuntime> {
-        if std::process::Command::new("exiftool").arg("-ver").output().is_err() {
+        if std::process::Command::new("exiftool")
+            .arg("-ver")
+            .output()
+            .is_err()
+        {
             eprintln!("SKIP synthetic: exiftool not on PATH");
             return None;
         }
@@ -1767,40 +2367,68 @@ mod tests {
     #[test]
     fn run_job_synthetic_applied_and_verified_on_jpeg() {
         let Some(rt) = runtime_or_skip() else { return };
-        let Some(srt) = synth_runtime_or_skip(&rt) else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else {
+            return;
+        };
         let dir = tempdir("synth-jpg");
         let src = dir.join("photo.jpg");
         fs::copy(fixture("dirty.jpg"), &src).unwrap();
         let sha_before = sha256_file(&src).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("s", src.clone())], &synth_settings(), &events, &AtomicBool::new(false), Some(&srt));
+        let report = run_job(
+            &rt,
+            vec![item("s", src.clone())],
+            &synth_settings(),
+            &events,
+            &AtomicBool::new(false),
+            Some(&srt),
+        );
         let r = &report.results[0];
 
         assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
         assert_eq!(r.synthetic_state, SyntheticState::AppliedVerified);
-        assert!(!r.synthetic_fields.is_empty(), "expected written decoy fields");
-        assert!(r.detail.contains("Synthetic metadata added and verified"), "{}", r.detail);
+        assert!(
+            !r.synthetic_fields.is_empty(),
+            "expected written decoy fields"
+        );
+        assert!(
+            r.detail.contains("Synthetic metadata added and verified"),
+            "{}",
+            r.detail
+        );
         assert_eq!(sha256_file(&src).unwrap(), sha_before, "original untouched");
 
         let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
         assert_eq!(outputs.len(), 1);
         let out_str = outputs[0].to_string_lossy().into_owned();
-        let readback = std::process::Command::new("exiftool").arg("-json").arg(&out_str).output().unwrap();
+        let readback = std::process::Command::new("exiftool")
+            .arg("-json")
+            .arg(&out_str)
+            .output()
+            .unwrap();
         let blob = String::from_utf8_lossy(&readback.stdout).to_lowercase();
-        assert!(!blob.contains("created with gimp"), "original comment must be absent");
+        assert!(
+            !blob.contains("created with gimp"),
+            "original comment must be absent"
+        );
         let some_value_written = r.synthetic_fields.iter().any(|f| {
             let v = f.value.to_lowercase();
             v.len() >= 4 && blob.contains(&v)
         });
-        assert!(some_value_written, "a generated decoy value must be readable in the output");
+        assert!(
+            some_value_written,
+            "a generated decoy value must be readable in the output"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn run_job_synthetic_unavailable_format_still_delivers_clean() {
         let Some(rt) = runtime_or_skip() else { return };
-        let Some(srt) = synth_runtime_or_skip(&rt) else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else {
+            return;
+        };
         let dir = tempdir("synth-mixed");
         let img = dir.join("photo.jpg");
         let txt = dir.join("notes.txt");
@@ -1808,13 +2436,24 @@ mod tests {
         fs::copy(fixture("dirty.txt"), &txt).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("i", img), item("t", txt)], &synth_settings(), &events, &AtomicBool::new(false), Some(&srt));
+        let report = run_job(
+            &rt,
+            vec![item("i", img), item("t", txt)],
+            &synth_settings(),
+            &events,
+            &AtomicBool::new(false),
+            Some(&srt),
+        );
         let ri = report.results.iter().find(|r| r.id == "i").unwrap();
         let rt_ = report.results.iter().find(|r| r.id == "t").unwrap();
         assert_eq!(ri.synthetic_state, SyntheticState::AppliedVerified);
         assert_eq!(rt_.status, FileStatus::Processed, "{:?}", rt_);
         assert_eq!(rt_.synthetic_state, SyntheticState::UnavailableFormat);
-        assert!(rt_.detail.contains("Synthetic mode unavailable"), "{}", rt_.detail);
+        assert!(
+            rt_.detail.contains("Synthetic mode unavailable"),
+            "{}",
+            rt_.detail
+        );
         assert!(rt_.committed);
         let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
         assert_eq!(outputs.len(), 2, "{:?}", outputs);
@@ -1824,48 +2463,84 @@ mod tests {
     #[test]
     fn run_job_synthetic_engine_failure_keeps_clean_output() {
         let Some(rt) = runtime_or_skip() else { return };
-        let Some(srt) = synth_runtime_or_skip(&rt) else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else {
+            return;
+        };
         let broken = srt.with_pack(PathBuf::from("/nonexistent/synthetic_pack.json"));
         let dir = tempdir("synth-broken");
         let src = dir.join("photo.jpg");
         fs::copy(fixture("dirty.jpg"), &src).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("s", src)], &synth_settings(), &events, &AtomicBool::new(false), Some(&broken));
+        let report = run_job(
+            &rt,
+            vec![item("s", src)],
+            &synth_settings(),
+            &events,
+            &AtomicBool::new(false),
+            Some(&broken),
+        );
         let r = &report.results[0];
 
         assert_eq!(r.status, FileStatus::Warning, "{:?}", r);
         assert_eq!(r.synthetic_state, SyntheticState::FailedKeptClean);
         assert!(r.detail.contains("MAT2 cleaning succeeded"), "{}", r.detail);
-        assert!(r.detail.contains("Clean output is available"), "{}", r.detail);
+        assert!(
+            r.detail.contains("Clean output is available"),
+            "{}",
+            r.detail
+        );
         assert!(r.synthetic_fields.is_empty());
         assert!(r.committed);
 
         let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
         assert_eq!(outputs.len(), 1, "restored clean output must be committed");
-        let readback = std::process::Command::new("exiftool").arg("-json").arg(&outputs[0]).output().unwrap();
+        let readback = std::process::Command::new("exiftool")
+            .arg("-json")
+            .arg(&outputs[0])
+            .output()
+            .unwrap();
         let blob = String::from_utf8_lossy(&readback.stdout);
-        assert!(!blob.contains("xmp.did:"), "no decoys may survive a failed synthetic run");
+        assert!(
+            !blob.contains("xmp.did:"),
+            "no decoys may survive a failed synthetic run"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn run_job_inplace_neutralizes_synthetic() {
         let Some(rt) = runtime_or_skip() else { return };
-        let Some(srt) = synth_runtime_or_skip(&rt) else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else {
+            return;
+        };
         let dir = tempdir("synth-inplace");
         let src = dir.join("photo.jpg");
         fs::copy(fixture("dirty.jpg"), &src).unwrap();
 
         let settings = JobSettings {
             inplace: true,
-            synthetic: Some(crate::synthetic::SyntheticOptions { enabled: true, ..Default::default() }),
+            synthetic: Some(crate::synthetic::SyntheticOptions {
+                enabled: true,
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("s", src.clone())], &settings, &events, &AtomicBool::new(false), Some(&srt));
+        let report = run_job(
+            &rt,
+            vec![item("s", src.clone())],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            Some(&srt),
+        );
         let r = &report.results[0];
-        assert_eq!(r.synthetic_state, SyntheticState::NotRequested, "in-place must never carry decoys");
+        assert_eq!(
+            r.synthetic_state,
+            SyntheticState::NotRequested,
+            "in-place must never carry decoys"
+        );
         assert!(r.status == FileStatus::Processed || r.status == FileStatus::Warning);
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1874,7 +2549,9 @@ mod tests {
         let mut out = Vec::new();
         let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
-            let Ok(entries) = fs::read_dir(&dir) else { continue };
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
             for e in entries.flatten() {
                 let p = e.path();
                 if p.is_dir() {

@@ -40,10 +40,11 @@ pub fn open_privacytools_site() -> Result<(), String> {
 pub fn reveal_dirs(output_paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     for p in output_paths {
-        if let Some(parent) = p.parent() {
-            if !parent.as_os_str().is_empty() && !dirs.iter().any(|d| d == parent) {
-                dirs.push(parent.to_path_buf());
-            }
+        if let Some(parent) = p.parent()
+            && !parent.as_os_str().is_empty()
+            && !dirs.iter().any(|d| d == parent)
+        {
+            dirs.push(parent.to_path_buf());
         }
     }
     dirs
@@ -55,7 +56,10 @@ pub fn reveal_paths(dirs: &[PathBuf]) -> Result<(), String> {
     }
     for d in dirs {
         if !d.is_dir() {
-            return Err(format!("output directory no longer exists: {:?}", d.file_name()));
+            return Err(format!(
+                "output directory no longer exists: {:?}",
+                d.file_name()
+            ));
         }
     }
     let args: Vec<&str> = dirs.iter().filter_map(|d| d.to_str()).collect();
@@ -98,7 +102,10 @@ mod tests {
         );
         assert_eq!(APPROVED_URLS.len(), 3);
         assert_eq!(MAT2_URL, "https://github.com/jvoisin/mat2");
-        assert_eq!(DANGERZONE_URL, "https://github.com/freedomofpress/dangerzone");
+        assert_eq!(
+            DANGERZONE_URL,
+            "https://github.com/freedomofpress/dangerzone"
+        );
         assert_eq!(PRIVACYTOOLS_URL, "https://www.privacytools.io/");
     }
 

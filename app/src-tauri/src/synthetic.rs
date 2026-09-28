@@ -84,7 +84,7 @@ impl Default for SyntheticOptions {
 }
 
 impl SyntheticOptions {
-    pub fn to_engine_json(&self) -> serde_json::Value {
+    pub fn to_engine_json(self) -> serde_json::Value {
         let scope = match self.profile_scope {
             ProfileScope::PerFile => "per_file",
             ProfileScope::Batch => "batch",
@@ -133,10 +133,12 @@ impl SyntheticRuntime {
     /// runtime so the bundled exiftool/mutagen are the ones used.
     pub fn resolve(
         mat2: &crate::mat2_runner::Mat2Runtime,
-        resource_dir: Option<&Path>,
+        _resource_dir: Option<&Path>,
     ) -> Result<SyntheticRuntime, String> {
         use crate::mat2_runner::RuntimeKind;
-        let pack_override = std::env::var("MAT2_WRAPPER_SYNTH_PACK").ok().map(PathBuf::from);
+        let pack_override = std::env::var("MAT2_WRAPPER_SYNTH_PACK")
+            .ok()
+            .map(PathBuf::from);
 
         match mat2.kind {
             RuntimeKind::Frozen => {
@@ -148,7 +150,10 @@ impl SyntheticRuntime {
                 let pack = pack_override
                     .unwrap_or_else(|| internal.join("synthetic_metadata_profiles_v1.json"));
                 if !pack.exists() {
-                    return Err(format!("synthetic pack not found in runtime bundle: {:?}", pack));
+                    return Err(format!(
+                        "synthetic pack not found in runtime bundle: {:?}",
+                        pack
+                    ));
                 }
                 Ok(SyntheticRuntime {
                     program: mat2.program.clone(),
@@ -164,8 +169,9 @@ impl SyntheticRuntime {
                     .nth(2)
                     .ok_or_else(|| "cannot derive project root".to_string())?;
                 let packaging = root.join("scripts/packaging");
-                let pack = pack_override
-                    .unwrap_or_else(|| root.join("addon-fauxmeta/synthetic_metadata_profiles_v1.json"));
+                let pack = pack_override.unwrap_or_else(|| {
+                    root.join("addon-fauxmeta/synthetic_metadata_profiles_v1.json")
+                });
                 if !packaging.join("synthetic_engine/__main__.py").exists() {
                     return Err("synthetic engine sources not found in dev tree".to_string());
                 }
@@ -305,18 +311,55 @@ pub struct ApplyResponse {
 /// computation excludes them so Phase-B absence checks target only
 /// identifying metadata (HANDOFF §20).
 pub const STRUCTURAL_KEYS: &[&str] = &[
-    "colorspace", "componentsconfiguration", "ycbcrpositioning", "exifversion",
-    "flashpixversion", "exifbyteorder", "encodingprocess", "bitspersample",
-    "colorcomponents", "compression", "jfifversion", "resolutionunit",
-    "xresolution", "yresolution", "imagewidth", "imageheight",
-    "exifimagewidth", "exifimageheight", "interopindex", "interopversion",
-    "filesource", "scenetype", "customrendered", "digitalzoomratio",
-    "sensingmethod", "scenecapturetype", "gaincontrol", "contrast",
-    "saturation", "sharpness", "subjectdistancerange", "exposuremode",
-    "whitebalance", "fnumber", "exposuretime", "exposurecompensation",
-    "focallength", "isospeedratings", "iso", "lightsource", "meteringmode",
-    "flash", "aperture", "shutterspeed", "maxaperturevalue", "brightness",
-    "subsectime", "subsectimeoriginal", "subsectimedigitized",
+    "colorspace",
+    "componentsconfiguration",
+    "ycbcrpositioning",
+    "exifversion",
+    "flashpixversion",
+    "exifbyteorder",
+    "encodingprocess",
+    "bitspersample",
+    "colorcomponents",
+    "compression",
+    "jfifversion",
+    "resolutionunit",
+    "xresolution",
+    "yresolution",
+    "imagewidth",
+    "imageheight",
+    "exifimagewidth",
+    "exifimageheight",
+    "interopindex",
+    "interopversion",
+    "filesource",
+    "scenetype",
+    "customrendered",
+    "digitalzoomratio",
+    "sensingmethod",
+    "scenecapturetype",
+    "gaincontrol",
+    "contrast",
+    "saturation",
+    "sharpness",
+    "subjectdistancerange",
+    "exposuremode",
+    "whitebalance",
+    "fnumber",
+    "exposuretime",
+    "exposurecompensation",
+    "focallength",
+    "isospeedratings",
+    "iso",
+    "lightsource",
+    "meteringmode",
+    "flash",
+    "aperture",
+    "shutterspeed",
+    "maxaperturevalue",
+    "brightness",
+    "subsectime",
+    "subsectimeoriginal",
+    "subsectimedigitized",
 ];
 
 /// Identifying values MAT2 removed (diff Removed entries), minus structural
@@ -382,8 +425,16 @@ mod tests {
         let diffs = vec![
             diff("Author", Some("Alice Example"), DiffStatus::Removed),
             diff("ColorSpace", Some("Uncalibrated"), DiffStatus::Removed),
-            diff("ComponentsConfiguration", Some("Y, Cb, Cr, -"), DiffStatus::Removed),
-            diff("GPSPosition", Some("43 deg 28' 2.81\" N"), DiffStatus::Removed),
+            diff(
+                "ComponentsConfiguration",
+                Some("Y, Cb, Cr, -"),
+                DiffStatus::Removed,
+            ),
+            diff(
+                "GPSPosition",
+                Some("43 deg 28' 2.81\" N"),
+                DiffStatus::Removed,
+            ),
             diff("Make", Some("NIKON"), DiffStatus::Removed),
             diff("ExifImageWidth", Some("640"), DiffStatus::Removed),
             diff("Software", Some("Nikon Transfer"), DiffStatus::Changed),
@@ -396,7 +447,10 @@ mod tests {
         assert!(!values.iter().any(|v| v == "Uncalibrated"));
         assert!(!values.iter().any(|v| v.contains("Y, Cb")));
         assert!(!values.iter().any(|v| v == "sRGB"));
-        assert!(!values.contains(&"Nikon Transfer".to_string()), "Changed is not an absence target");
+        assert!(
+            !values.contains(&"Nikon Transfer".to_string()),
+            "Changed is not an absence target"
+        );
     }
 
     #[test]
@@ -420,7 +474,9 @@ mod tests {
         };
         let synth = SyntheticRuntime::resolve(&mat2, None).unwrap();
         let seed = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
-        let p = synth.preview(&SyntheticOptions::default(), &seed, "sel-preview", "jpg").unwrap();
+        let p = synth
+            .preview(&SyntheticOptions::default(), &seed, "sel-preview", "jpg")
+            .unwrap();
         assert_eq!(p["ok"], serde_json::json!(true));
         assert!(p["profile"]["archetype"].is_string());
         let blob = serde_json::to_string(&p).unwrap();

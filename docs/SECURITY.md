@@ -115,6 +115,28 @@ Every `Command::new` call site lives in `mat2_runner.rs`/runtime-management code
 takes argv vectors (no shell interpolation), and is documented in the Task 22
 audit table. Filenames are always passed after `--`.
 
+## Supply-chain review (Task 20)
+
+Full component/license inventory and per-dependency justification:
+`docs/THIRD_PARTY_LICENSES.md`. Gate status:
+
+- `cargo fmt --check` clean; `cargo clippy --all-targets` **0 warnings**
+  (dead code resolved: test-only APIs `#[cfg(test)]`-gated, unused fields
+  removed rather than allowed);
+- `cargo audit`: 0 vulnerabilities. Two allowed warnings (RUSTSEC-2024-0370
+  proc-macro-error, RUSTSEC-2024-0429 glib) are **Linux-GTK-chain /
+  build-lineage only** — proven absent from the aarch64-apple-darwin graph;
+- `cargo deny check` (deny.toml scoped to the shipping target): advisories,
+  bans, licenses, sources all **ok**; first-party crate carries
+  `LicenseRef-Proprietary` pending the owner's license decision;
+- `npm audit`: 0 vulnerabilities;
+- Upstream MAT2 suite rerun in dev env: 147 tests, 1 failure + 1 skip —
+  identical to the Task 1 recorded baseline (environmental, not a regression);
+  upstream tree restored pristine (`verify-upstream.sh` OK);
+- Frozen runtime bundle: every file hashed in `MANIFEST.sha256` (964+ files),
+  component versions pinned in `PACKAGE_INFO.json`, synthetic profile pack
+  SHA-256 pinned in both the packaging script and Rust (`EXPECTED_PACK_SHA256`).
+
 ## Known residual risks (accepted for v1)
 
 1. No OS-level sandbox around MAT2 child processes on macOS (upstream removed

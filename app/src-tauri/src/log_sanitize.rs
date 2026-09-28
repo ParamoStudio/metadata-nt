@@ -66,7 +66,9 @@ const TRUNC_MARK: &str = "…[truncated]";
 
 /// Consume the remainder of an escape sequence starting after the ESC.
 fn skip_escape(chars: &mut std::iter::Peekable<std::str::Chars>) {
-    let Some(kind) = chars.peek().copied() else { return };
+    let Some(kind) = chars.peek().copied() else {
+        return;
+    };
     match kind {
         // OSC / DCS / SOS / PM / APC: terminated by BEL or ST (ESC \)
         ']' | 'P' | 'X' | '^' | '_' => {
@@ -130,9 +132,15 @@ mod tests {
 
     #[test]
     fn ansi_csi_sequences_removed_text_kept() {
-        assert_eq!(sanitize("\u{1b}[31mERROR\u{1b}[0m: bad file"), "ERROR: bad file");
+        assert_eq!(
+            sanitize("\u{1b}[31mERROR\u{1b}[0m: bad file"),
+            "ERROR: bad file"
+        );
         assert_eq!(sanitize("\u{1b}[1;33;40mWarning\u{1b}[m"), "Warning");
-        assert_eq!(sanitize("\u{1b}[?25lhidden cursor\u{1b}[?25h"), "hidden cursor");
+        assert_eq!(
+            sanitize("\u{1b}[?25lhidden cursor\u{1b}[?25h"),
+            "hidden cursor"
+        );
     }
 
     #[test]
@@ -149,7 +157,10 @@ mod tests {
     fn carriage_return_tricks_become_visible_newlines() {
         assert_eq!(sanitize("OK\rFAILED!"), "OK\nFAILED!");
         assert_eq!(sanitize("a\r\nb"), "a\nb");
-        assert_eq!(sanitize("clean\u{1b}[2K\r[-] injected"), "clean\n[-] injected");
+        assert_eq!(
+            sanitize("clean\u{1b}[2K\r[-] injected"),
+            "clean\n[-] injected"
+        );
     }
 
     #[test]

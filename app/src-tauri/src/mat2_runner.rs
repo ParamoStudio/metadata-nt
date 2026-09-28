@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::model::{parse_inspection_stdout, InspectionResult};
+use crate::model::{InspectionResult, parse_inspection_stdout};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum UnknownMembers {
@@ -84,6 +84,7 @@ pub fn expected_cleaned_path(input: &Path) -> PathBuf {
     parent.join(out)
 }
 
+#[cfg(test)]
 fn inspect_argv(file: &Path, verbose: bool) -> Vec<OsString> {
     let mut argv: Vec<OsString> = Vec::new();
     if verbose {
@@ -116,14 +117,15 @@ fn clean_argv(file: &Path, opts: &CleanOptions) -> Vec<OsString> {
 }
 
 impl Mat2Runtime {
-    /// Locate the supplied MAT2 runtime. Order:
-    /// 1. MAT2_WRAPPER_PYTHON + MAT2_WRAPPER_SCRIPT env overrides (dev shape);
-    /// 1b. MAT2_WRAPPER_RUNTIME_BIN env override (frozen shape);
-    /// 2. packaged runtime inside the app resource dir (frozen, Task 19);
-    /// 3. development tree (project-root/.venv/bin/python + upstream-mat2/mat2,
-    ///    derived from the compile-time manifest dir);
-    /// 4. Err — callers must fail visibly, never fall back to a global `mat2`
-    ///    or any alternate engine (HANDOFF §3).
+    /// Locate the supplied MAT2 runtime. Resolution order: env overrides
+    /// (MAT2_WRAPPER_PYTHON + MAT2_WRAPPER_SCRIPT for the dev shape, or
+    /// MAT2_WRAPPER_RUNTIME_BIN for the frozen shape), then the packaged
+    /// runtime inside the app resource dir (frozen, Task 19), then the
+    /// development tree (project-root/.venv/bin/python + upstream-mat2/mat2,
+    /// derived from the compile-time manifest dir), then Err — callers must
+    /// fail visibly, never fall back to a global `mat2` or any alternate
+    /// engine (HANDOFF §3).
+    #[cfg(test)]
     pub fn resolve() -> Result<Mat2Runtime, String> {
         Self::resolve_with_hint(None)
     }
@@ -238,6 +240,7 @@ impl Mat2Runtime {
     /// `--show` mode. WARNING: upstream always exits 0 in show mode, even for
     /// unsupported or missing files — callers must parse stdout, never trust
     /// `success` alone here (docs/UPSTREAM_SNAPSHOT.md §4.5).
+    #[cfg(test)]
     pub fn inspect(&self, file: &Path, verbose: bool) -> Result<Mat2Output, String> {
         self.run(inspect_argv(file, verbose))
     }
@@ -283,6 +286,7 @@ impl Mat2Runtime {
 
     /// Normal (or lightweight/inplace) cleaning of a single file.
     /// Exit 0 = success; 255 (-1) = upstream signalled failure.
+    #[cfg(test)]
     pub fn clean(&self, file: &Path, opts: &CleanOptions) -> Result<Mat2Output, String> {
         match self.clean_cancellable(file, opts, &std::sync::atomic::AtomicBool::new(false))? {
             CleanRunOutcome::Completed(out) => Ok(out),
@@ -372,8 +376,12 @@ pub fn parse_dependency_report(stdout: &str) -> Vec<DependencyStatus> {
     let mut out = Vec::new();
     for line in stdout.lines() {
         let line = line.trim();
-        let Some(rest) = line.strip_prefix("- ") else { continue };
-        let Some((name, status)) = rest.split_once(':') else { continue };
+        let Some(rest) = line.strip_prefix("- ") else {
+            continue;
+        };
+        let Some((name, status)) = rest.split_once(':') else {
+            continue;
+        };
         let status = status.trim();
         if status.is_empty() {
             continue;
@@ -414,13 +422,13 @@ pub fn build_diagnostics(
             return DiagnosticsDto {
                 error: Some(e),
                 ..diagnostics_unavailable("version query failed", app_version)
-            }
+            };
         }
         Ok(v) if !v.success => {
             return DiagnosticsDto {
                 error: Some(format!("version query exit {:?}", v.exit_code)),
                 ..diagnostics_unavailable("version query failed", app_version)
-            }
+            };
         }
         Ok(v) => v.stdout.trim().to_string(),
     };
@@ -431,7 +439,7 @@ pub fn build_diagnostics(
                 error: Some(e),
                 version: Some(version_str),
                 ..diagnostics_unavailable("dependency check failed", app_version)
-            }
+            };
         }
         Ok(d) => parse_dependency_report(&d.stdout),
     };
@@ -491,7 +499,10 @@ mod tests {
     #[test]
     fn clean_argv_normal() {
         let argv = clean_argv(Path::new("/tmp/x/photo.jpg"), &CleanOptions::default());
-        let strs: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let strs: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(
             strs,
             vec!["--unknown-members", "abort", "--", "/tmp/x/photo.jpg"]
@@ -507,7 +518,10 @@ mod tests {
             inplace: true,
         };
         let argv = clean_argv(Path::new("/a/b.png"), &opts);
-        let strs: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let strs: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(
             strs,
             vec![
@@ -525,7 +539,10 @@ mod tests {
     #[test]
     fn inspect_argv_show() {
         let argv = inspect_argv(Path::new("/a/b.pdf"), false);
-        let strs: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let strs: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(strs, vec!["--show", "--", "/a/b.pdf"]);
         let argv_v = inspect_argv(Path::new("/a/b.pdf"), true);
         assert_eq!(argv_v[0], OsString::from("--verbose"));
@@ -555,10 +572,17 @@ mod tests {
             assert_eq!(argv.last().unwrap(), p.as_os_str());
             // the path always comes after the end-of-options marker
             let dd = argv.iter().position(|a| a == "--").expect("no -- marker");
-            assert_eq!(dd, argv.len() - 2, "file not immediately after -- for {name:?}");
+            assert_eq!(
+                dd,
+                argv.len() - 2,
+                "file not immediately after -- for {name:?}"
+            );
             // no argv element besides the path contains the hostile payload
             for a in &argv[..dd] {
-                assert!(!a.to_string_lossy().contains(name), "flag slot polluted by {name:?}");
+                assert!(
+                    !a.to_string_lossy().contains(name),
+                    "flag slot polluted by {name:?}"
+                );
             }
         }
     }
@@ -572,7 +596,10 @@ mod tests {
             kind: RuntimeKind::Dev,
         };
         let mut cmd = rt.base_command();
-        cmd.args(clean_argv(Path::new("/tmp/a.jpg"), &CleanOptions::default()));
+        cmd.args(clean_argv(
+            Path::new("/tmp/a.jpg"),
+            &CleanOptions::default(),
+        ));
         let prog = cmd.get_program().to_string_lossy().into_owned();
         assert_eq!(prog, "/usr/bin/true");
         for shell in ["sh", "bash", "zsh", "/bin/sh", "/bin/bash", "/bin/zsh"] {
@@ -626,7 +653,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let p = std::env::temp_dir().join(format!("mat2run-{}-{}-{}", tag, std::process::id(), nanos));
+        let p =
+            std::env::temp_dir().join(format!("mat2run-{}-{}-{}", tag, std::process::id(), nanos));
         std::fs::create_dir_all(&p).unwrap();
         p
     }
@@ -638,11 +666,19 @@ mod tests {
         assert_eq!(deps.len(), 4);
         assert_eq!(
             deps[0],
-            DependencyStatus { name: "Cairo".into(), found: true, required: true }
+            DependencyStatus {
+                name: "Cairo".into(),
+                found: true,
+                required: true
+            }
         );
         assert_eq!(
             deps[1],
-            DependencyStatus { name: "Exiftool".into(), found: false, required: false }
+            DependencyStatus {
+                name: "Exiftool".into(),
+                found: false,
+                required: false
+            }
         );
         assert!(parse_dependency_report("nonsense\nno dash here").is_empty());
     }
@@ -674,7 +710,10 @@ mod tests {
         };
         let d2 = build_diagnostics(Ok(ok_ver.clone()), Ok(bad_deps), "0.1.0");
         assert!(d2.fatal && d2.available);
-        assert_eq!(d2.missing_required, vec!["Poppler from PyGobject".to_string()]);
+        assert_eq!(
+            d2.missing_required,
+            vec!["Poppler from PyGobject".to_string()]
+        );
 
         let d3 = build_diagnostics(Err("spawn failed".into()), Ok(ok_deps.clone()), "0.1.0");
         assert!(!d3.available && d3.fatal && d3.error.is_some());
@@ -705,13 +744,21 @@ mod tests {
         assert!(v.success && v.stdout.contains("mat2 "), "version: {:?}", v);
 
         let l = rt.list_formats().unwrap();
-        assert!(l.success && l.stdout.contains("image/jpeg"), "list: {:?}", l);
+        assert!(
+            l.success && l.stdout.contains("image/jpeg"),
+            "list: {:?}",
+            l
+        );
 
         let d = rt.check_dependencies().unwrap();
         assert!(d.success && d.stdout.contains("Poppler"), "deps: {:?}", d);
 
         let h = rt.help().unwrap();
-        assert!(h.success && h.stdout.contains("--unknown-members"), "help: {:?}", h);
+        assert!(
+            h.success && h.stdout.contains("--unknown-members"),
+            "help: {:?}",
+            h
+        );
 
         let dir = tempdir("roundtrip");
         let fixture = dir.join("dirty.jpg");
@@ -721,7 +768,11 @@ mod tests {
 
         let shown = rt.inspect(&fixture, false).unwrap();
         assert!(shown.success);
-        assert!(shown.stdout.contains("Comment: Created with GIMP"), "inspect: {:?}", shown.stdout);
+        assert!(
+            shown.stdout.contains("Comment: Created with GIMP"),
+            "inspect: {:?}",
+            shown.stdout
+        );
 
         let cleaned = rt.clean(&fixture, &CleanOptions::default()).unwrap();
         assert!(cleaned.success, "clean failed: {:?}", cleaned);
@@ -730,7 +781,11 @@ mod tests {
         assert!(std::fs::metadata(&out_path).unwrap().len() > 0);
 
         let after = rt.inspect(&out_path, false).unwrap();
-        assert!(after.stdout.contains("No metadata found"), "post-inspect: {:?}", after.stdout);
+        assert!(
+            after.stdout.contains("No metadata found"),
+            "post-inspect: {:?}",
+            after.stdout
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -761,7 +816,11 @@ mod tests {
         let shown = rt.inspect(&weird, false).unwrap();
         // documents the false-success trap: exit 0 despite "not supported"
         assert!(shown.success, "show mode should exit 0: {:?}", shown);
-        assert!(shown.stdout.contains("not supported"), "stdout: {:?}", shown.stdout);
+        assert!(
+            shown.stdout.contains("not supported"),
+            "stdout: {:?}",
+            shown.stdout
+        );
 
         let structured = rt.inspect_json(&weird).unwrap();
         assert!(structured.error.is_none());
@@ -783,10 +842,12 @@ mod tests {
         assert!(cli.stdout.contains("Comment: Created with GIMP"));
         assert!(structured.supported && structured.error.is_none());
         assert_eq!(structured.mimetype.as_deref(), Some("image/jpeg"));
-        assert!(structured
-            .entries
-            .iter()
-            .any(|e| e.key == "Comment" && e.display_value == "Created with GIMP"));
+        assert!(
+            structured
+                .entries
+                .iter()
+                .any(|e| e.key == "Comment" && e.display_value == "Created with GIMP")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -805,7 +866,11 @@ mod tests {
         assert!(
             structured.entries.iter().any(|e| e.key.contains(" / ")),
             "expected member-nested keys, got {:?}",
-            structured.entries.iter().map(|e| &e.key).collect::<Vec<_>>()
+            structured
+                .entries
+                .iter()
+                .map(|e| &e.key)
+                .collect::<Vec<_>>()
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

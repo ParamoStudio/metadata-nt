@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex};
 use jobs::{FileJobResult, JobItem, JobSettings};
 use mat2_runner::{Mat2Runtime, UnknownMembers};
 use model::{FileStatus, PublicSelectedFile};
-use serde::Deserialize;
 use selection::Registry;
+use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 use tauri_plugin_dialog::DialogExt;
 
@@ -107,7 +107,10 @@ fn select_files(app: AppHandle, window: Window) {
         .set_parent(&window)
         .pick_files(move |picked| {
             if let Some(items) = picked {
-                let paths: Vec<PathBuf> = items.into_iter().filter_map(|fp| fp.into_path().ok()).collect();
+                let paths: Vec<PathBuf> = items
+                    .into_iter()
+                    .filter_map(|fp| fp.into_path().ok())
+                    .collect();
                 register_paths(&handle, paths);
             }
         });
@@ -120,10 +123,10 @@ fn select_folder(app: AppHandle, window: Window) {
         .file()
         .set_parent(&window)
         .pick_folder(move |picked| {
-            if let Some(item) = picked {
-                if let Ok(path) = item.into_path() {
-                    register_paths(&handle, vec![path]);
-                }
+            if let Some(item) = picked
+                && let Ok(path) = item.into_path()
+            {
+                register_paths(&handle, vec![path]);
             }
         });
 }
@@ -135,18 +138,23 @@ fn choose_output_root(app: AppHandle, window: Window) {
         .file()
         .set_parent(&window)
         .pick_folder(move |picked| {
-            if let Some(item) = picked {
-                if let Ok(path) = item.into_path() {
-                    if let Ok(canonical) = fs::canonicalize(&path) {
-                        *handle.state::<AppState>().custom_output_root.lock().expect("poisoned") =
-                            Some(canonical.clone());
-                        let display = canonical
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
-                        let _ = handle.emit("output-root-changed", serde_json::json!({ "displayName": display }));
-                    }
-                }
+            if let Some(item) = picked
+                && let Ok(path) = item.into_path()
+                && let Ok(canonical) = fs::canonicalize(&path)
+            {
+                *handle
+                    .state::<AppState>()
+                    .custom_output_root
+                    .lock()
+                    .expect("poisoned") = Some(canonical.clone());
+                let display = canonical
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
+                let _ = handle.emit(
+                    "output-root-changed",
+                    serde_json::json!({ "displayName": display }),
+                );
             }
         });
 }
@@ -230,9 +238,10 @@ impl jobs::JobEvents for TauriJobEvents {
     }
 
     fn log(&self, line: &str) {
-        let _ = self
-            .app
-            .emit("job-log", serde_json::json!({ "line": log_sanitize::sanitize(line) }));
+        let _ = self.app.emit(
+            "job-log",
+            serde_json::json!({ "line": log_sanitize::sanitize(line) }),
+        );
     }
 
     fn file_result(&self, result: &FileJobResult, final_path: Option<&Path>) {
@@ -252,10 +261,10 @@ fn start_clean_job(
 ) -> Result<String, String> {
     {
         let slot = state.job.lock().expect("poisoned");
-        if let Some(active) = slot.as_ref() {
-            if !active.done.load(Ordering::SeqCst) {
-                return Err("a job is already running".into());
-            }
+        if let Some(active) = slot.as_ref()
+            && !active.done.load(Ordering::SeqCst)
+        {
+            return Err("a job is already running".into());
         }
     }
     if ids.is_empty() {
@@ -363,7 +372,14 @@ fn start_clean_job(
     let job_id_for_thread = job_id.clone();
 
     std::thread::spawn(move || {
-        let report = jobs::run_job(&rt, items, &job_settings, events.as_ref(), &cancel, synth_rt.as_ref());
+        let report = jobs::run_job(
+            &rt,
+            items,
+            &job_settings,
+            events.as_ref(),
+            &cancel,
+            synth_rt.as_ref(),
+        );
         for r in &report.results {
             app.state::<AppState>().registry.set_status(&r.id, r.status);
         }
@@ -380,11 +396,11 @@ fn start_clean_job(
 #[tauri::command]
 fn cancel_job(state: State<'_, AppState>) -> bool {
     let slot = state.job.lock().expect("poisoned");
-    if let Some(active) = slot.as_ref() {
-        if !active.done.load(Ordering::SeqCst) {
-            active.cancel.store(true, Ordering::SeqCst);
-            return true;
-        }
+    if let Some(active) = slot.as_ref()
+        && !active.done.load(Ordering::SeqCst)
+    {
+        active.cancel.store(true, Ordering::SeqCst);
+        return true;
     }
     false
 }
@@ -394,7 +410,11 @@ fn resource_hint(app: &AppHandle) -> Option<PathBuf> {
 }
 
 #[tauri::command]
-fn inspect_selection(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<model::InspectionDto, String> {
+fn inspect_selection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<model::InspectionDto, String> {
     let snap = state
         .registry
         .snapshot(&id)
@@ -423,7 +443,9 @@ fn runtime_diagnostics(app: AppHandle) -> model::DiagnosticsDto {
     let app_version = app.package_info().version.to_string();
     match Mat2Runtime::resolve_with_hint(resource_hint(&app).as_deref()) {
         Err(e) => mat2_runner::diagnostics_unavailable(&e, &app_version),
-        Ok(rt) => mat2_runner::build_diagnostics(rt.version(), rt.check_dependencies(), &app_version),
+        Ok(rt) => {
+            mat2_runner::build_diagnostics(rt.version(), rt.check_dependencies(), &app_version)
+        }
     }
 }
 
@@ -453,7 +475,10 @@ fn synthetic_preview(
             .unwrap_or("preview failed");
         return Err(reason.to_string());
     }
-    Ok(resp.get("profile").cloned().unwrap_or(serde_json::json!({})))
+    Ok(resp
+        .get("profile")
+        .cloned()
+        .unwrap_or(serde_json::json!({})))
 }
 
 #[tauri::command]
@@ -463,7 +488,10 @@ fn synthetic_pack_info(app: AppHandle) -> Result<serde_json::Value, String> {
     let sha = srt.pack_sha256()?;
     let mut info = srt.validate_pack()?;
     if let Some(obj) = info.as_object_mut() {
-        obj.insert("pinned".to_string(), serde_json::json!(sha == synthetic::EXPECTED_PACK_SHA256));
+        obj.insert(
+            "pinned".to_string(),
+            serde_json::json!(sha == synthetic::EXPECTED_PACK_SHA256),
+        );
     }
     Ok(info)
 }
@@ -530,7 +558,7 @@ pub fn run() {
                     tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { .. }) => {
                         let _ = app_handle.emit("drag-enter", ());
                     }
-                    tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave { .. }) => {
+                    tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave) => {
                         let _ = app_handle.emit("drag-leave", ());
                     }
                     _ => {}

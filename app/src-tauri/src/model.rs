@@ -118,16 +118,17 @@ pub fn parse_inspection_stdout(stdout: &str) -> Result<InspectionResult, String>
         });
     }
 
-    let supported = obj.get("supported").and_then(Value::as_bool).unwrap_or(false);
+    let supported = obj
+        .get("supported")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let mimetype = obj
         .get("mimetype")
         .and_then(Value::as_str)
         .map(str::to_string);
     let mut entries = Vec::new();
-    if supported {
-        if let Some(meta) = obj.get("metadata") {
-            flatten_metadata(meta, "", &mut entries);
-        }
+    if supported && let Some(meta) = obj.get("metadata") {
+        flatten_metadata(meta, "", &mut entries);
     }
     Ok(InspectionResult {
         error: None,
@@ -169,10 +170,10 @@ pub fn flatten_metadata(value: &Value, prefix: &str, out: &mut Vec<MetadataEntry
 }
 
 /// Before/after comparison (INTERFACE.md §15). Statuses:
-/// - Removed:   present before, absent after
-/// - Changed:   present in both with different values, OR appeared only after
-///              (documented mapping: a newly detectable key changes the
-///              detectable-metadata set; it is never a success signal)
+/// - Removed: present before, absent after
+/// - Changed: present in both with different values, OR appeared only after
+///   (documented mapping: a newly detectable key changes the detectable
+///   metadata set; it is never a success signal)
 /// - Remaining: present in both with identical values
 pub fn diff_metadata(before: &[MetadataEntry], after: &[MetadataEntry]) -> Vec<MetadataDiff> {
     let mut diffs = Vec::new();
@@ -225,8 +226,14 @@ pub struct DiffSummary {
 pub fn summarize(diffs: &[MetadataDiff], before_len: usize) -> DiffSummary {
     DiffSummary {
         detected_before: before_len,
-        removed: diffs.iter().filter(|d| d.status == DiffStatus::Removed).count(),
-        changed: diffs.iter().filter(|d| d.status == DiffStatus::Changed).count(),
+        removed: diffs
+            .iter()
+            .filter(|d| d.status == DiffStatus::Removed)
+            .count(),
+        changed: diffs
+            .iter()
+            .filter(|d| d.status == DiffStatus::Changed)
+            .count(),
         still_detectable: diffs.iter().filter(|d| d.after.is_some()).count(),
     }
 }
@@ -251,13 +258,17 @@ mod tests {
         assert_eq!(r.mimetype.as_deref(), Some("image/jpeg"));
         assert_eq!(
             r.entries,
-            vec![entry("Comment", "Created with GIMP"), entry("Software", "x")]
+            vec![
+                entry("Comment", "Created with GIMP"),
+                entry("Software", "x")
+            ]
         );
     }
 
     #[test]
     fn parses_unsupported_and_error() {
-        let r = parse_inspection_stdout(r#"{"ok": true, "supported": false, "mimetype": null}"#).unwrap();
+        let r = parse_inspection_stdout(r#"{"ok": true, "supported": false, "mimetype": null}"#)
+            .unwrap();
         assert!(!r.supported && r.error.is_none() && r.entries.is_empty());
 
         let r = parse_inspection_stdout(r#"{"ok": false, "error": "invalid file: boom"}"#).unwrap();
@@ -304,8 +315,9 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert!(out.iter().any(|e| e.key == "key: with colon / and sep"
             && e.display_value == "<img src=x onerror=alert(1)>"));
-        assert!(out.iter().any(|e| e.key == "<script>x</script>"
-            && e.display_value == "<b>bold</b> & \"quoted\""));
+        assert!(out.iter().any(
+            |e| e.key == "<script>x</script>" && e.display_value == "<b>bold</b> & \"quoted\""
+        ));
     }
 
     #[test]
