@@ -98,7 +98,7 @@
                 <p class="helper warning hidden" id="unknown-members-keep-warning">
                   Keeping unknown archive members may preserve metadata.
                 </p>
-                <label class="hidden" id="inplace-row">
+                <label id="inplace-row">
                   <input type="checkbox" id="opt-inplace" />
                   Replace original files
                 </label>
@@ -172,6 +172,17 @@
         </nav>
         <span id="no-telemetry">No telemetry</span>
       </footer>
+
+      <div id="confirm-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div id="confirm-box">
+          <h3 id="confirm-title"></h3>
+          <p id="confirm-text"></p>
+          <div id="confirm-buttons">
+            <button id="confirm-cancel" type="button">Cancel</button>
+            <button id="confirm-ok" type="button" class="destructive">Confirm</button>
+          </div>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

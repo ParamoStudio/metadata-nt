@@ -65,6 +65,7 @@ export interface JobSettingsDto {
   verbose: boolean;
   unknownMembers: "abort" | "omit" | "keep";
   output: "beside" | "custom";
+  inplace: boolean;
 }
 
 export interface JobStatusEvent {

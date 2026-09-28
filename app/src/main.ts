@@ -43,6 +43,27 @@ const state: UiState = {
 
 const MAX_LOG_LINES = 500;
 
+let confirmResolver: ((value: boolean) => void) | null = null;
+
+function confirmDialog(title: string, text: string, okLabel: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    confirmResolver = resolve;
+    mustEl("confirm-title").textContent = title;
+    mustEl("confirm-text").textContent = text;
+    const ok = mustEl("confirm-ok") as HTMLButtonElement;
+    ok.textContent = okLabel;
+    mustEl("confirm-overlay").classList.remove("hidden");
+    ok.focus();
+  });
+}
+
+function closeConfirm(result: boolean): void {
+  mustEl("confirm-overlay").classList.add("hidden");
+  const resolve = confirmResolver;
+  confirmResolver = null;
+  if (resolve) resolve(result);
+}
+
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
@@ -424,17 +445,37 @@ function renderInspectionData(data: InspectionDto): void {
   renderMetaTable(data.entries);
 }
 
+function updateOutputLock(): void {
+  const inplaceOn = inputEl("opt-inplace")?.checked === true;
+  const fieldset = mustEl("output-mode") as HTMLFieldSetElement;
+  fieldset.disabled = inplaceOn;
+  if (inplaceOn) {
+    mustEl("custom-output-row").classList.add("hidden");
+  }
+}
+
+function resetInplaceUi(): void {
+  const inplaceBox = inputEl("opt-inplace");
+  if (inplaceBox && inplaceBox.checked) {
+    inplaceBox.checked = false;
+    mustEl("inplace-warning").classList.add("hidden");
+    logInfo("In-place mode reset to OFF (arm consumed by the job; off on every launch).");
+  }
+  updateOutputLock();
+}
+
 function readSettings(): JobSettingsDto | null {
   const mode = document.querySelector<HTMLInputElement>('input[name="mode"]:checked');
   const output = document.querySelector<HTMLInputElement>('input[name="output"]:checked');
   const verbose = inputEl("opt-verbose");
   const unknown = el("opt-unknown-members") as HTMLSelectElement | null;
-  if (!mode || !output || !verbose || !unknown) return null;
+  const inplace = inputEl("opt-inplace");
+  if (!mode || !output || !verbose || !unknown || !inplace) return null;
   const unknownMembers = unknown.value;
   if (unknownMembers !== "abort" && unknownMembers !== "omit" && unknownMembers !== "keep") {
     return null;
   }
-  if (output.value === "custom" && !state.customRootName) {
+  if (!inplace.checked && output.value === "custom" && !state.customRootName) {
     showInspectionMessage("error", "Choose a custom output folder first.");
     logInfo("Custom output mode selected but no folder chosen yet.");
     return null;
@@ -444,6 +485,7 @@ function readSettings(): JobSettingsDto | null {
     verbose: verbose.checked,
     unknownMembers,
     output: output.value === "custom" ? "custom" : "beside",
+    inplace: inplace.checked,
   };
 }
 
@@ -528,8 +570,19 @@ async function startJob(): Promise<void> {
   if (ids.length === 0 || state.jobRunning) return;
   const settings = readSettings();
   if (!settings) return;
+  if (settings.inplace) {
+    const confirmed = await confirmDialog(
+      `Confirm destructive processing of ${ids.length} original files`,
+      "This changes the selected originals. No wrapper-created backup is guaranteed.",
+      "Replace originals",
+    );
+    if (!confirmed) {
+      logInfo("Destructive job aborted at confirmation.");
+      return;
+    }
+  }
   setJobRunning(true);
-  logInfo(`Job started: ${ids.length} file(s), mode ${settings.lightweight ? "lightweight" : "maximum removal"}, output ${settings.output}`);
+  logInfo(`Job started: ${ids.length} file(s), mode ${settings.lightweight ? "lightweight" : "maximum removal"}, ${settings.inplace ? "IN PLACE (destructive)" : `output ${settings.output}`}`);
   try {
     await ipc.startCleanJob(ids, settings);
   } catch (err) {
@@ -577,6 +630,52 @@ function boot(): void {
     mustEl("unknown-members-keep-warning").classList.toggle("hidden", unknownSelect.value !== "keep");
   });
 
+  const inplaceBox = inputEl("opt-inplace");
+  inplaceBox?.addEventListener("change", () => {
+    void (async () => {
+      if (inplaceBox.checked) {
+        const ok = await confirmDialog(
+          "Replace original files?",
+          "Normal mode preserves the original and produces a cleaned copy. In-place mode changes the selected original files.",
+          "Enable in-place",
+        );
+        if (!ok) {
+          inplaceBox.checked = false;
+          return;
+        }
+        try {
+          await ipc.setInplaceArmed(true);
+        } catch (err) {
+          logError("arm in-place", err);
+          inplaceBox.checked = false;
+          return;
+        }
+        mustEl("inplace-warning").classList.remove("hidden");
+        logInfo("Destructive in-place mode ARMED for the next job only.");
+      } else {
+        try {
+          await ipc.setInplaceArmed(false);
+        } catch (err) {
+          logError("disarm in-place", err);
+        }
+        mustEl("inplace-warning").classList.add("hidden");
+        logInfo("Destructive in-place mode disabled.");
+      }
+      updateOutputLock();
+    })();
+  });
+
+  bind("confirm-ok", () => closeConfirm(true));
+  bind("confirm-cancel", () => closeConfirm(false));
+  mustEl("confirm-overlay").addEventListener("click", (e) => {
+    if (e.target === mustEl("confirm-overlay")) closeConfirm(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !mustEl("confirm-overlay").classList.contains("hidden")) {
+      closeConfirm(false);
+    }
+  });
+
   for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="output"]')) {
     radio.addEventListener("change", () => {
       const custom = document.querySelector<HTMLInputElement>('input[name="output"]:checked')?.value === "custom";
@@ -611,6 +710,7 @@ function boot(): void {
   });
   void ipc.onJobFinished((e) => {
     setJobRunning(false);
+    resetInplaceUi();
     logInfo(e.cancelled ? "Job cancelled." : "Job finished.");
     void refresh();
   });

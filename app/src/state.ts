@@ -51,6 +51,10 @@ export function cancelJob(): Promise<boolean> {
   return invoke<boolean>("cancel_job");
 }
 
+export function setInplaceArmed(armed: boolean): Promise<void> {
+  return invoke("set_inplace_armed", { armed });
+}
+
 export function inspectSelection(id: string): Promise<InspectionDto> {
   return invoke<InspectionDto>("inspect_selection", { id });
 }

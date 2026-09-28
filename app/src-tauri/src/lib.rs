@@ -38,6 +38,12 @@ struct AppState {
     registry: Registry,
     job: Mutex<Option<ActiveJob>>,
     custom_output_root: Mutex<Option<PathBuf>>,
+    /// SECURITY: destructive in-place mode must be armed IN-SESSION by an
+    /// explicit user action (set_inplace_armed). This flag lives only in
+    /// process memory, so it is false on every launch and stale frontend
+    /// state can never re-enable destructive mode silently. The arm is
+    /// consumed by the first job that uses it (one confirmation per job).
+    inplace_armed: AtomicBool,
 }
 
 fn register_paths(app: &AppHandle, paths: Vec<PathBuf>) {
@@ -164,6 +170,13 @@ struct JobSettingsDto {
     verbose: bool,
     unknown_members: String,
     output: String,
+    #[serde(default)]
+    inplace: bool,
+}
+
+#[tauri::command]
+fn set_inplace_armed(state: State<'_, AppState>, armed: bool) {
+    state.inplace_armed.store(armed, Ordering::SeqCst);
 }
 
 struct TauriJobEvents {
@@ -233,18 +246,31 @@ fn start_clean_job(
         "keep" => UnknownMembers::Keep,
         other => return Err(format!("invalid unknown-members policy: {other}")),
     };
-    let custom_output_root = match settings.output.as_str() {
-        "beside" => None,
-        "custom" => Some(
-            state
-                .custom_output_root
-                .lock()
-                .expect("poisoned")
-                .clone()
-                .ok_or_else(|| "custom output folder not chosen yet".to_string())?,
-        ),
-        other => return Err(format!("invalid output mode: {other}")),
+    let custom_output_root = if settings.inplace {
+        None
+    } else {
+        match settings.output.as_str() {
+            "beside" => None,
+            "custom" => Some(
+                state
+                    .custom_output_root
+                    .lock()
+                    .expect("poisoned")
+                    .clone()
+                    .ok_or_else(|| "custom output folder not chosen yet".to_string())?,
+            ),
+            other => return Err(format!("invalid output mode: {other}")),
+        }
     };
+
+    if settings.inplace {
+        if !state.inplace_armed.swap(false, Ordering::SeqCst) {
+            return Err(
+                "destructive in-place mode is not armed for this session; enable it explicitly in Advanced settings"
+                    .into(),
+            );
+        }
+    }
 
     let rt = Mat2Runtime::resolve()?;
     for item in &items {
@@ -267,6 +293,7 @@ fn start_clean_job(
         verbose: settings.verbose,
         unknown_members,
         custom_output_root,
+        inplace: settings.inplace,
     };
     let events = Arc::new(TauriJobEvents {
         app: app.clone(),
@@ -356,6 +383,7 @@ pub fn run() {
             output_root_info,
             start_clean_job,
             cancel_job,
+            set_inplace_armed,
             inspect_selection,
             mat2_version,
             mat2_formats,
