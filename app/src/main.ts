@@ -1113,7 +1113,7 @@ function boot(): void {
     }
   })();
 
-  logInfo("MAT2 Wrapper UI ready. Files stay on this device.");
+  logInfo("metadata'nt UI ready. Files stay on this device.");
   void refresh();
 }
 

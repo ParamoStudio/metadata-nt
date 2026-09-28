@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "MAT2 Wrapper",
+  "productName": "metadata'nt",
   "version": "0.1.0",
-  "identifier": "com.paramostudio.mat2wrapper",
+  "identifier": "com.paramostudio.metadata-nt",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "MAT2 Wrapper",
+        "title": "metadata'nt",
         "width": 1040,
         "height": 660,
         "minWidth": 900,
@@ -24,7 +24,9 @@
       }
     ],
     "security": {
-      "capabilities": ["main"],
+      "capabilities": [
+        "main"
+      ],
       "csp": {
         "default-src": "'self'",
         "script-src": "'self'",
@@ -42,7 +44,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "resources": {
       "resources/mat2-runtime": "mat2-runtime"
     },
