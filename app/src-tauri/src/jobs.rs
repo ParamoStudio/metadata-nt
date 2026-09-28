@@ -1357,6 +1357,89 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[test]
+    fn security_regression_hostile_filenames_end_to_end() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("sec-hostile");
+        let hostile_img_names = [
+            "--version.jpg",
+            "--help.png",
+            "; touch owned.jpg",
+            "$(touch owned2).jpg",
+            "<img src=x onerror=alert(1)>.jpg",
+            "quote'and\"double.png",
+            "ansi\u{1b}[31mred.jpg",
+        ];        let mut items = Vec::new();
+        for (i, name) in hostile_img_names.iter().enumerate() {
+            let fixture_src = if name.ends_with(".png") { fixture("dirty.png") } else { fixture("dirty.jpg") };
+            let p = dir.join(name);
+            fs::copy(&fixture_src, &p).unwrap();
+            items.push(item(&format!("h{i}"), p));
+        }
+        // POSIX filenames cannot contain '/', so a literal `</script>` closing
+        // tag is unrealizable as a name; this variant keeps the hostile HTML
+        // shape (angle brackets, event handler, tag-like syntax) as data.
+        let script_pdf = dir.join("<script>alert(1)<\\script>.pdf");
+        fs::copy(fixture("dirty.pdf"), &script_pdf).unwrap();
+        items.push(item("hpdf", script_pdf));
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false));
+
+        for r in &report.results {
+            assert!(
+                r.status == FileStatus::Processed || r.status == FileStatus::Warning,
+                "hostile name {:?} should process as data, got {:?}: {}",
+                r.display_name, r.status, r.detail
+            );
+        }
+        assert!(report.results.iter().any(|r| r.display_name == "--version.jpg"));
+        assert!(report.results.iter().any(|r| r.display_name == "<img src=x onerror=alert(1)>.jpg"));
+        assert!(report.results.iter().any(|r| r.display_name == "<script>alert(1)<\\script>.pdf"));
+
+        // shell-injection evidence files must NOT exist anywhere
+        for probe in ["owned", "owned2"] {
+            assert!(!dir.join(probe).exists(), "injection executed: {probe} created");
+        }
+        assert!(!std::env::current_dir().unwrap().join("owned").exists());
+        assert!(!std::env::current_dir().unwrap().join("owned2").exists());
+
+        // logs contain no ESC/control characters despite the ANSI filename
+        for l in events.logs() {
+            assert!(!l.chars().any(|c| (c as u32) < 0x20 && c != '\n' && c != '\t'), "control char in log: {:?}", l);
+        }
+
+        // outputs confined to the job output root
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), hostile_img_names.len() + 1, "{:?}", outputs);
+        for o in &outputs {
+            assert!(o.starts_with(dir.join(crate::output::OUTPUT_DIR_NAME)));
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn security_regression_symlink_source_stays_data_and_target_untouched() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let dir = tempdir("sec-symlink");
+        let target = dir.join("real.jpg");
+        fs::copy(fixture("dirty.jpg"), &target).unwrap();
+        let target_sha = sha256_file(&target).unwrap();
+        let link = dir.join("link.jpg");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("l", link.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+
+        let r = &report.results[0];
+        assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
+        assert_eq!(sha256_file(&target).unwrap(), target_sha, "symlink target must be untouched");
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink(), "link itself must remain a link");
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 1, "{:?}", outputs);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     fn walkdir_flat(root: &Path) -> Vec<PathBuf> {
         let mut out = Vec::new();
         let mut stack = vec![root.to_path_buf()];

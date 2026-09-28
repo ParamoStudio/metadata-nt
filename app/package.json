@@ -9,6 +9,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint:no-remote": "bash ../scripts/check-no-remote-refs.sh",
+    "lint:ipc-surface": "bash ../scripts/check-ipc-surface.sh",
+    "lint:no-html-sinks": "bash ../scripts/check-no-html-sinks.sh",
+    "lint:all": "npm run lint:no-remote && npm run lint:ipc-surface && npm run lint:no-html-sinks",
     "tauri": "tauri"
   },
   "dependencies": {
