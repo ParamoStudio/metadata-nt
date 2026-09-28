@@ -472,3 +472,121 @@ select {
 #external-links button:hover {
   color: var(--text);
 }
+
+/* ---------- Task 12: inspection, rows, groups ---------- */
+
+#inspection-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+#inspection-file-name {
+  font-weight: 600;
+  font-size: 13px;
+  word-break: break-all;
+  user-select: text;
+}
+
+#meta-table {
+  width: 100%;
+  border-collapse: collapse;
+  user-select: text;
+}
+
+#meta-table th,
+#meta-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+#meta-table th {
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.message {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  word-break: break-word;
+  user-select: text;
+}
+
+.message.ok {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+}
+
+.message.warning {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+}
+
+.message.error {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 35%, var(--border));
+}
+
+.file-note {
+  font-size: 10px;
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+  border-radius: 4px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+#file-list li:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+#group-toggles {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+#group-toggles button {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+#btn-inspect-only {
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+#custom-output-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 2px 22px;
+}
+
+#custom-output-row button {
+  font-size: 11px;
+  padding: 3px 8px;
+  flex-shrink: 0;
+}
+
+#custom-output-path {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

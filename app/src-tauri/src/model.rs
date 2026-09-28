@@ -56,6 +56,25 @@ pub struct InspectionResult {
     pub entries: Vec<MetadataEntry>,
 }
 
+#[derive(Serialize, Clone, Debug)]
+pub struct InspectionDto {
+    pub supported: bool,
+    pub mimetype: Option<String>,
+    pub error: Option<String>,
+    pub entries: Vec<MetadataEntry>,
+}
+
+impl From<InspectionResult> for InspectionDto {
+    fn from(r: InspectionResult) -> Self {
+        InspectionDto {
+            supported: r.supported,
+            mimetype: r.mimetype,
+            error: r.error,
+            entries: r.entries,
+        }
+    }
+}
+
 /// Parse the JSON protocol emitted by resources/mat2_inspect.py.
 pub fn parse_inspection_stdout(stdout: &str) -> Result<InspectionResult, String> {
     let value: Value = serde_json::from_str(stdout.trim())

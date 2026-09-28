@@ -84,3 +84,11 @@ export interface JobFinishedEvent {
 export interface OutputRootChangedEvent {
   displayName: string;
 }
+
+/** Result of `inspect_selection` (Rust InspectionDto). */
+export interface InspectionDto {
+  supported: boolean;
+  mimetype: string | null;
+  error: string | null;
+  entries: MetadataEntry[];
+}

@@ -39,6 +39,10 @@
             </div>
             <ul id="file-list" aria-label="Selected files"></ul>
             <div id="extension-filters" role="group" aria-label="Filter by extension"></div>
+            <div id="group-toggles" class="hidden">
+              <button id="btn-group-check" type="button">Check group</button>
+              <button id="btn-group-uncheck" type="button">Uncheck group</button>
+            </div>
           </div>
 
           <div id="settings-section">
@@ -72,7 +76,10 @@
                 <input type="radio" name="output" value="custom" />
                 Custom folder
               </label>
-              <span id="custom-output-path"></span>
+              <div id="custom-output-row" class="hidden">
+                <button id="btn-choose-output" type="button">Choose folder…</button>
+                <span id="custom-output-path">No folder chosen yet</span>
+              </div>
             </fieldset>
 
             <details id="advanced">
@@ -91,7 +98,7 @@
                 <p class="helper warning hidden" id="unknown-members-keep-warning">
                   Keeping unknown archive members may preserve metadata.
                 </p>
-                <label>
+                <label class="hidden" id="inplace-row">
                   <input type="checkbox" id="opt-inplace" />
                   Replace original files
                 </label>
@@ -110,6 +117,7 @@
           </div>
 
           <div id="process-section">
+            <button id="btn-inspect-only" type="button" title="Run MAT2 inspection without cleaning">Inspect only</button>
             <button id="btn-process" type="button" disabled>PROCESS</button>
             <button id="btn-cancel" type="button" class="hidden">CANCEL</button>
           </div>
@@ -120,7 +128,18 @@
           <div id="inspection-section">
             <h2>Inspection / Result</h2>
             <div id="inspection-content">
+              <div id="inspection-header" class="hidden">
+                <span id="inspection-file-name"></span>
+                <span id="inspection-file-status"></span>
+              </div>
               <p id="inspection-placeholder">Select a file to see MAT2-detected metadata.</p>
+              <div id="inspection-message" class="hidden"></div>
+              <table id="meta-table" class="hidden" aria-label="Metadata detected by MAT2">
+                <thead>
+                  <tr><th scope="col">Field</th><th scope="col">Detected value</th></tr>
+                </thead>
+                <tbody id="meta-body"></tbody>
+              </table>
               <table id="diff-table" class="hidden" aria-label="Metadata before and after">
                 <thead>
                   <tr><th scope="col">Field</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Status</th></tr>

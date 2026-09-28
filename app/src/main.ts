@@ -8,24 +8,56 @@
  * - no document previews or thumbnails.
  */
 
-import { listen } from "@tauri-apps/api/event";
-import {
-  initialState,
-  refreshSelection,
-  requestRemove,
-  requestSelectFiles,
-  requestSelectFolder,
-} from "./state";
-import type { PublicSelectedFile } from "./types";
+import * as ipc from "./state";
+import type {
+  FileJobResult,
+  FileStatus,
+  InspectionDto,
+  JobSettingsDto,
+  PublicSelectedFile,
+} from "./types";
 
-const state = initialState();
-const checkedIds = new Set<string>();
+interface UiState {
+  files: PublicSelectedFile[];
+  results: Map<string, FileJobResult>;
+  checked: Set<string>;
+  filter: string;
+  selectedId: string | null;
+  inspections: Map<string, InspectionDto>;
+  inspectingId: string | null;
+  jobRunning: boolean;
+  customRootName: string | null;
+}
+
+const state: UiState = {
+  files: [],
+  results: new Map(),
+  checked: new Set(),
+  filter: "ALL",
+  selectedId: null,
+  inspections: new Map(),
+  inspectingId: null,
+  jobRunning: false,
+  customRootName: null,
+};
+
+const MAX_LOG_LINES = 500;
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
 
-function statusClass(status: PublicSelectedFile["status"]): string {
+function mustEl(id: string): HTMLElement {
+  const node = el(id);
+  if (!node) throw new Error(`missing element #${id}`);
+  return node;
+}
+
+function inputEl(id: string): HTMLInputElement | null {
+  return el(id) as HTMLInputElement | null;
+}
+
+function statusClass(status: FileStatus): string {
   switch (status) {
     case "Processed":
       return "success";
@@ -39,92 +71,572 @@ function statusClass(status: PublicSelectedFile["status"]): string {
   }
 }
 
-function renderFileList(): void {
-  const list = el("file-list") as HTMLUListElement | null;
-  const dropZone = el("drop-zone");
-  if (!list) return;
-  list.replaceChildren();
+function extKey(f: PublicSelectedFile): string {
+  return (f.extension ?? "OTHER").toUpperCase();
+}
 
-  if (dropZone) {
-    dropZone.classList.toggle("hidden", state.files.length > 0);
+function looksPreviouslyProcessed(f: PublicSelectedFile): boolean {
+  const name = f.display_name.toLowerCase();
+  const rel = (f.relative_path ?? "").toLowerCase();
+  return (
+    name.includes(".cleaned.") ||
+    name.includes(".cleaned-") ||
+    rel.includes("mat2 output")
+  );
+}
+
+function localStamp(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function appendLog(line: string): void {
+  const log = mustEl("log");
+  log.appendChild(document.createTextNode(`${line}\n`));
+  while (log.childNodes.length > MAX_LOG_LINES) {
+    log.removeChild(log.firstChild!);
   }
+  log.scrollTop = log.scrollHeight;
+}
 
-  for (const file of state.files) {
+function logInfo(message: string): void {
+  appendLog(`[${localStamp()}] ${message}`);
+}
+
+function logError(context: string, err: unknown): void {
+  appendLog(`[${localStamp()}] ERROR ${context}: ${String(err)}`);
+}
+
+function visibleFiles(): PublicSelectedFile[] {
+  if (state.filter === "ALL") return state.files;
+  return state.files.filter((f) => extKey(f) === state.filter);
+}
+
+function checkedCount(): number {
+  return state.files.filter((f) => state.checked.has(f.id)).length;
+}
+
+function renderFilters(): void {
+  const wrap = mustEl("extension-filters");
+  wrap.replaceChildren();
+  if (state.files.length === 0) {
+    mustEl("group-toggles").classList.add("hidden");
+    return;
+  }
+  const counts = new Map<string, number>();
+  for (const f of state.files) {
+    const k = extKey(f);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const makeChip = (label: string, key: string, count: number) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = `${label} ${count}`;
+    if (state.filter === key) btn.classList.add("active");
+    btn.addEventListener("click", () => {
+      state.filter = key;
+      renderFilters();
+      renderFiles();
+    });
+    return btn;
+  };
+  wrap.append(makeChip("ALL", "ALL", state.files.length));
+  for (const key of [...counts.keys()].sort()) {
+    wrap.append(makeChip(key, key, counts.get(key)!));
+  }
+  mustEl("group-toggles").classList.toggle("hidden", state.filter === "ALL");
+}
+
+function renderFiles(): void {
+  const list = mustEl("file-list") as HTMLUListElement;
+  const dropZone = mustEl("drop-zone");
+  list.replaceChildren();
+  dropZone.classList.toggle("hidden", state.files.length > 0);
+
+  for (const file of visibleFiles()) {
     const li = document.createElement("li");
     li.dataset.id = file.id;
+    li.tabIndex = 0;
+    if (file.id === state.selectedId) li.classList.add("selected");
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.checked = checkedIds.has(file.id) || file.status === "Ready";
+    checkbox.checked = state.checked.has(file.id);
     checkbox.setAttribute("aria-label", `Include ${file.display_name}`);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) {
-        checkedIds.add(file.id);
+        state.checked.add(file.id);
       } else {
-        checkedIds.delete(file.id);
+        state.checked.delete(file.id);
       }
-      updateProcessButton();
+      updateProcessBar();
     });
-    if (checkbox.checked) checkedIds.add(file.id);
 
     const name = document.createElement("span");
     name.className = "file-name";
     name.textContent = file.relative_path ?? file.display_name;
+    name.title = file.relative_path ?? file.display_name;
 
     const status = document.createElement("span");
     status.className = `file-status ${statusClass(file.status)}`.trim();
     status.textContent = file.status;
 
     li.append(checkbox, name, status);
+
+    if (looksPreviouslyProcessed(file)) {
+      const note = document.createElement("span");
+      note.className = "file-note";
+      note.textContent = "Appears previously processed";
+      li.append(note);
+    }
+
+    const select = () => selectRow(file.id);
+    li.addEventListener("click", (e) => {
+      if (e.target !== checkbox) select();
+    });
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        select();
+      }
+    });
     list.append(li);
   }
-  updateProcessButton();
+  updateProcessBar();
 }
 
-function updateProcessButton(): void {
-  const btn = el("btn-process") as HTMLButtonElement | null;
+function selectRow(id: string): void {
+  state.selectedId = id;
+  renderFiles();
+  void renderInspection();
+}
+
+function setJobRunning(running: boolean): void {
+  state.jobRunning = running;
+  mustEl("btn-process").classList.toggle("hidden", running);
+  mustEl("btn-cancel").classList.toggle("hidden", !running);
+  const lockIds = [
+    "btn-add-files",
+    "btn-add-folder",
+    "btn-remove-selected",
+    "btn-inspect-only",
+    "btn-choose-output",
+    "diag-version",
+    "diag-formats",
+    "diag-deps",
+    "diag-help",
+  ];
+  for (const id of lockIds) {
+    const node = inputEl(id);
+    if (node) node.disabled = running;
+  }
+  const settings = mustEl("settings-section");
+  for (const input of settings.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+    "input, select",
+  )) {
+    input.disabled = running;
+  }
+  updateProcessBar();
+}
+
+function updateProcessBar(): void {
+  const btn = inputEl("btn-process");
   if (!btn) return;
-  const count = [...checkedIds].filter((id) =>
-    state.files.some((f) => f.id === id),
-  ).length;
+  const count = checkedCount();
   btn.textContent = count === 1 ? "PROCESS 1 FILE" : `PROCESS ${count} FILES`;
-  btn.disabled = count === 0;
+  btn.disabled = count === 0 || state.jobRunning;
+}
+
+function showInspectionMessage(kind: "ok" | "warning" | "error", text: string): void {
+  const box = mustEl("inspection-message");
+  box.replaceChildren();
+  box.className = `message ${kind}`;
+  box.textContent = text;
+  box.classList.remove("hidden");
+}
+
+function hideInspectionParts(): void {
+  mustEl("inspection-placeholder").classList.add("hidden");
+  mustEl("inspection-message").classList.add("hidden");
+  mustEl("meta-table").classList.add("hidden");
+  mustEl("diff-table").classList.add("hidden");
+  mustEl("diff-summary").classList.add("hidden");
+  mustEl("epistemic-note").classList.add("hidden");
+}
+
+function renderInspectionHeader(file: PublicSelectedFile, statusText: string | null): void {
+  const header = mustEl("inspection-header");
+  const nameEl = mustEl("inspection-file-name");
+  const statusEl = mustEl("inspection-file-status");
+  nameEl.textContent = file.relative_path ?? file.display_name;
+  if (statusText) {
+    statusEl.textContent = statusText;
+    statusEl.className = `file-status ${statusClass(file.status)}`.trim();
+    statusEl.classList.remove("hidden");
+  } else {
+    statusEl.textContent = "";
+    statusEl.classList.add("hidden");
+  }
+  header.classList.remove("hidden");
+}
+
+function renderMetaTable(entries: InspectionDto["entries"]): void {
+  const table = mustEl("meta-table");
+  const body = mustEl("meta-body");
+  body.replaceChildren();
+  for (const e of entries) {
+    const tr = document.createElement("tr");
+    const k = document.createElement("td");
+    k.textContent = e.key;
+    const v = document.createElement("td");
+    v.textContent = e.display_value;
+    tr.append(k, v);
+    body.append(tr);
+  }
+  table.classList.remove("hidden");
+}
+
+function renderDiff(result: FileJobResult): void {
+  const table = mustEl("diff-table");
+  const body = mustEl("diff-body");
+  body.replaceChildren();
+  for (const d of result.diffs) {
+    const tr = document.createElement("tr");
+    const key = document.createElement("td");
+    key.textContent = d.key;
+    const before = document.createElement("td");
+    before.textContent = d.before ?? "Not detected";
+    const after = document.createElement("td");
+    after.textContent = d.after ?? "Removed";
+    const status = document.createElement("td");
+    status.textContent = d.status;
+    status.className = `status-${d.status.toLowerCase()}`;
+    tr.append(key, before, after, status);
+    body.append(tr);
+  }
+  table.classList.remove("hidden");
+
+  const summary = mustEl("diff-summary");
+  summary.classList.remove("hidden");
+  if (result.summary && result.summary.still_detectable === 0) {
+    summary.textContent = [
+      `Detected before: ${result.summary.detected_before}`,
+      `Removed: ${result.summary.removed}`,
+      `Changed: ${result.summary.changed}`,
+      "No metadata detectable by MAT2",
+    ].join("\n");
+    mustEl("epistemic-note").classList.remove("hidden");
+  } else if (result.summary) {
+    summary.textContent = [
+      `Detected before: ${result.summary.detected_before}`,
+      `Removed: ${result.summary.removed}`,
+      `Changed: ${result.summary.changed}`,
+      `Still detectable by MAT2: ${result.summary.still_detectable}`,
+    ].join("\n");
+  } else {
+    summary.textContent = result.detail;
+  }
+}
+
+async function renderInspection(): Promise<void> {
+  hideInspectionParts();
+  const id = state.selectedId;
+  if (!id) {
+    mustEl("inspection-header").classList.add("hidden");
+    mustEl("inspection-placeholder").classList.remove("hidden");
+    return;
+  }
+  const file = state.files.find((f) => f.id === id);
+  if (!file) {
+    mustEl("inspection-header").classList.add("hidden");
+    mustEl("inspection-placeholder").classList.remove("hidden");
+    return;
+  }
+
+  const result = state.results.get(id);
+  if (result) {
+    renderInspectionHeader(file, result.status);
+    if (result.diffs.length > 0 || result.summary) {
+      renderDiff(result);
+    } else {
+      showInspectionMessage(
+        result.status === "Processed" ? "ok" : result.status === "Warning" ? "warning" : "error",
+        result.detail,
+      );
+      if (result.status === "Processed") {
+        mustEl("epistemic-note").classList.remove("hidden");
+      }
+    }
+    return;
+  }
+
+  renderInspectionHeader(file, null);
+  const cached = state.inspections.get(id);
+  if (cached) {
+    renderInspectionData(cached);
+    return;
+  }
+  if (state.inspectingId === id) {
+    showInspectionMessage("ok", "Inspecting…");
+    return;
+  }
+
+  state.inspectingId = id;
+  showInspectionMessage("ok", "Inspecting…");
+  try {
+    const data = await ipc.inspectSelection(id);
+    state.inspections.set(id, data);
+    if (state.selectedId === id && !state.results.has(id)) {
+      hideInspectionParts();
+      renderInspectionHeader(file, null);
+      renderInspectionData(data);
+    }
+  } catch (err) {
+    if (state.selectedId === id) {
+      hideInspectionParts();
+      renderInspectionHeader(file, null);
+      showInspectionMessage("error", `Inspection failed: ${String(err)}`);
+    }
+    logError("inspection", err);
+  } finally {
+    if (state.inspectingId === id) state.inspectingId = null;
+  }
+}
+
+function renderInspectionData(data: InspectionDto): void {
+  if (data.error) {
+    showInspectionMessage("error", data.error);
+    return;
+  }
+  if (!data.supported) {
+    showInspectionMessage(
+      "warning",
+      `MAT2 does not support this format${data.mimetype ? ` (${data.mimetype})` : ""}. It will not be processed.`,
+    );
+    return;
+  }
+  if (data.entries.length === 0) {
+    showInspectionMessage("ok", "No metadata detectable by MAT2");
+    mustEl("epistemic-note").classList.remove("hidden");
+    return;
+  }
+  renderMetaTable(data.entries);
+}
+
+function readSettings(): JobSettingsDto | null {
+  const mode = document.querySelector<HTMLInputElement>('input[name="mode"]:checked');
+  const output = document.querySelector<HTMLInputElement>('input[name="output"]:checked');
+  const verbose = inputEl("opt-verbose");
+  const unknown = el("opt-unknown-members") as HTMLSelectElement | null;
+  if (!mode || !output || !verbose || !unknown) return null;
+  const unknownMembers = unknown.value;
+  if (unknownMembers !== "abort" && unknownMembers !== "omit" && unknownMembers !== "keep") {
+    return null;
+  }
+  if (output.value === "custom" && !state.customRootName) {
+    showInspectionMessage("error", "Choose a custom output folder first.");
+    logInfo("Custom output mode selected but no folder chosen yet.");
+    return null;
+  }
+  return {
+    lightweight: mode.value === "lightweight",
+    verbose: verbose.checked,
+    unknownMembers,
+    output: output.value === "custom" ? "custom" : "beside",
+  };
 }
 
 async function refresh(): Promise<void> {
-  await refreshSelection(state);
-  for (const id of [...checkedIds]) {
-    if (!state.files.some((f) => f.id === id)) checkedIds.delete(id);
+  try {
+    const files = await ipc.listSelection();
+    const ids = new Set(files.map((f) => f.id));
+    for (const id of [...state.checked]) {
+      if (!ids.has(id)) state.checked.delete(id);
+    }
+    for (const id of [...state.results.keys()]) {
+      if (!ids.has(id)) state.results.delete(id);
+    }
+    for (const id of [...state.inspections.keys()]) {
+      if (!ids.has(id)) state.inspections.delete(id);
+    }
+    if (state.selectedId && !ids.has(state.selectedId)) {
+      state.selectedId = null;
+    }
+    for (const f of files) {
+      if (!state.checked.has(f.id) && !state.files.some((old) => old.id === f.id)) {
+        state.checked.add(f.id);
+      }
+    }
+    state.files = files;
+    renderFilters();
+    renderFiles();
+    void renderInspection();
+  } catch (err) {
+    logError("refresh", err);
   }
-  renderFileList();
 }
 
-function bindButton(id: string, handler: () => void): void {
+async function runInspectOnly(): Promise<void> {
+  const ids = state.files.filter((f) => state.checked.has(f.id)).map((f) => f.id);
+  if (ids.length === 0) {
+    logInfo("Inspect only: no files checked.");
+    return;
+  }
+  for (const id of ids) {
+    const file = state.files.find((f) => f.id === id);
+    const label = file ? file.display_name : id;
+    try {
+      const data = await ipc.inspectSelection(id);
+      state.inspections.set(id, data);
+      if (data.error) {
+        logInfo(`${label}: inspection error — ${data.error}`);
+      } else if (!data.supported) {
+        logInfo(`${label}: format not supported by MAT2${data.mimetype ? ` (${data.mimetype})` : ""}`);
+      } else {
+        logInfo(`${label}: ${data.entries.length} metadata fields detectable by MAT2`);
+      }
+    } catch (err) {
+      logError(`inspect ${label}`, err);
+    }
+  }
+  if (ids.length === 1 && ids[0]) {
+    selectRow(ids[0]);
+  }
+}
+
+function bindDiagnostics(buttonId: string, title: string, cmd: () => Promise<string>): void {
+  mustEl(buttonId).addEventListener("click", async () => {
+    appendLog(`[${localStamp()}] --- ${title} ---`);
+    try {
+      const out = await cmd();
+      for (const line of out.split("\n")) {
+        appendLog(line);
+      }
+    } catch (err) {
+      logError(title, err);
+    }
+  });
+}
+
+function bind(id: string, handler: () => void): void {
   el(id)?.addEventListener("click", handler);
+}
+
+async function startJob(): Promise<void> {
+  const ids = state.files.filter((f) => state.checked.has(f.id)).map((f) => f.id);
+  if (ids.length === 0 || state.jobRunning) return;
+  const settings = readSettings();
+  if (!settings) return;
+  setJobRunning(true);
+  logInfo(`Job started: ${ids.length} file(s), mode ${settings.lightweight ? "lightweight" : "maximum removal"}, output ${settings.output}`);
+  try {
+    await ipc.startCleanJob(ids, settings);
+  } catch (err) {
+    logError("start job", err);
+    setJobRunning(false);
+  }
 }
 
 function boot(): void {
   const statusValue = el("mat2-status-value");
   if (statusValue) {
-    statusValue.textContent = "Not connected (Task 15 wires diagnostics)";
+    statusValue.textContent = "Ready (diagnostics in Advanced)";
+    statusValue.className = "ok";
   }
 
-  bindButton("btn-add-files", () => void requestSelectFiles());
-  bindButton("btn-add-folder", () => void requestSelectFolder());
-  bindButton("btn-remove-selected", () =>
-    void requestRemove([...checkedIds]).then(refresh),
-  );
-
-  const dropZone = el("drop-zone");
-  dropZone?.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    dropZone.classList.add("dragover");
+  bind("btn-add-files", () => ipc.selectFiles().catch((e) => logError("select files", e)));
+  bind("btn-add-folder", () => ipc.selectFolder().catch((e) => logError("select folder", e)));
+  bind("btn-remove-selected", () => {
+    void ipc.removeItems([...state.checked]).catch((e) => logError("remove", e));
   });
-  dropZone?.addEventListener("dragleave", () => {
-    dropZone.classList.remove("dragover");
+  bind("btn-process", () => void startJob());
+  bind("btn-cancel", () => {
+    ipc.cancelJob().catch((e) => logError("cancel", e));
+    logInfo("Cancellation requested…");
+  });
+  bind("btn-inspect-only", () => void runInspectOnly());
+  bind("btn-choose-output", () => ipc.chooseOutputRoot().catch((e) => logError("choose output", e)));
+
+  bind("btn-group-check", () => {
+    for (const f of visibleFiles()) state.checked.add(f.id);
+    renderFiles();
+  });
+  bind("btn-group-uncheck", () => {
+    for (const f of visibleFiles()) state.checked.delete(f.id);
+    renderFiles();
   });
 
-  void listen("selection-changed", () => void refresh());
+  bindDiagnostics("diag-version", "MAT2 version", ipc.mat2Version);
+  bindDiagnostics("diag-formats", "Supported formats", ipc.mat2Formats);
+  bindDiagnostics("diag-deps", "Dependency check", ipc.mat2CheckDependencies);
+  bindDiagnostics("diag-help", "MAT2 help", ipc.mat2Help);
+
+  const unknownSelect = el("opt-unknown-members") as HTMLSelectElement | null;
+  unknownSelect?.addEventListener("change", () => {
+    mustEl("unknown-members-keep-warning").classList.toggle("hidden", unknownSelect.value !== "keep");
+  });
+
+  for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="output"]')) {
+    radio.addEventListener("change", () => {
+      const custom = document.querySelector<HTMLInputElement>('input[name="output"]:checked')?.value === "custom";
+      mustEl("custom-output-row").classList.toggle("hidden", !custom);
+    });
+  }
+
+  const dropZone = mustEl("drop-zone");
+  bind("drop-choose-files", () => ipc.selectFiles().catch((e) => logError("select files", e)));
+  bind("drop-choose-folder", () => ipc.selectFolder().catch((e) => logError("select folder", e)));
+  dropZone.addEventListener("click", () => ipc.selectFiles().catch((e) => logError("select files", e)));
+  dropZone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      void ipc.selectFiles().catch((err) => logError("select files", err));
+    }
+  });
+
+  void ipc.onSelectionChanged(() => void refresh());
+  void ipc.onJobStatus((e) => {
+    const file = state.files.find((f) => f.id === e.id);
+    if (file) file.status = e.status;
+    renderFiles();
+  });
+  void ipc.onJobLog((line) => appendLog(line));
+  void ipc.onJobFileResult((r) => {
+    state.results.set(r.id, r);
+    const file = state.files.find((f) => f.id === r.id);
+    if (file) file.status = r.status;
+    renderFiles();
+    if (state.selectedId === r.id) void renderInspection();
+  });
+  void ipc.onJobFinished((e) => {
+    setJobRunning(false);
+    logInfo(e.cancelled ? "Job cancelled." : "Job finished.");
+    void refresh();
+  });
+  void ipc.onOutputRootChanged((name) => {
+    state.customRootName = name;
+    const label = el("custom-output-path");
+    if (label) label.textContent = name;
+    logInfo(`Custom output folder: ${name}`);
+  });
+  void ipc.onDragEnter(() => dropZone.classList.add("dragover"));
+  void ipc.onDragLeave(() => dropZone.classList.remove("dragover"));
+
+  void (async () => {
+    try {
+      const root = await ipc.outputRootInfo();
+      if (root) {
+        state.customRootName = root;
+        const label = el("custom-output-path");
+        if (label) label.textContent = root;
+      }
+    } catch (err) {
+      logError("output root info", err);
+    }
+  })();
+
+  logInfo("MAT2 Wrapper UI ready. Files stay on this device.");
   void refresh();
 }
 

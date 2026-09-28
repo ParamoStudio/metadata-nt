@@ -301,6 +301,48 @@ fn cancel_job(state: State<'_, AppState>) -> bool {
     false
 }
 
+#[tauri::command]
+fn inspect_selection(state: State<'_, AppState>, id: String) -> Result<model::InspectionDto, String> {
+    let snap = state
+        .registry
+        .snapshot(&id)
+        .ok_or_else(|| "unknown selection id".to_string())?;
+    let rt = Mat2Runtime::resolve()?;
+    let result = rt.inspect_json(&snap.path)?;
+    Ok(result.into())
+}
+
+fn diagnostic_output(f: impl Fn(&Mat2Runtime) -> Result<mat2_runner::Mat2Output, String>) -> Result<String, String> {
+    let rt = Mat2Runtime::resolve()?;
+    let out = f(&rt)?;
+    let mut text = out.stdout;
+    if !out.stderr.trim().is_empty() {
+        text.push_str("\n[stderr]\n");
+        text.push_str(&out.stderr);
+    }
+    Ok(log_sanitize::sanitize(&text))
+}
+
+#[tauri::command]
+fn mat2_version() -> Result<String, String> {
+    diagnostic_output(|rt| rt.version())
+}
+
+#[tauri::command]
+fn mat2_formats() -> Result<String, String> {
+    diagnostic_output(|rt| rt.list_formats())
+}
+
+#[tauri::command]
+fn mat2_check_dependencies() -> Result<String, String> {
+    diagnostic_output(|rt| rt.check_dependencies())
+}
+
+#[tauri::command]
+fn mat2_help() -> Result<String, String> {
+    diagnostic_output(|rt| rt.help())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -313,17 +355,33 @@ pub fn run() {
             choose_output_root,
             output_root_info,
             start_clean_job,
-            cancel_job
+            cancel_job,
+            inspect_selection,
+            mat2_version,
+            mat2_formats,
+            mat2_check_dependencies,
+            mat2_help
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::WindowEvent {
-                event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }),
+                event: window_event,
                 ..
             } = event
             {
-                register_paths(app_handle, paths);
+                match window_event {
+                    tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
+                        register_paths(app_handle, paths);
+                    }
+                    tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { .. }) => {
+                        let _ = app_handle.emit("drag-enter", ());
+                    }
+                    tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave { .. }) => {
+                        let _ = app_handle.emit("drag-leave", ());
+                    }
+                    _ => {}
+                }
             }
         });
 }
