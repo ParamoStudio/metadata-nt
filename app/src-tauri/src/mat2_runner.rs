@@ -38,10 +38,23 @@ pub struct Mat2Output {
     pub stderr: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RuntimeKind {
+    /// Development: project venv Python + supplied upstream script.
+    Dev,
+    /// Packaged: self-contained PyInstaller runtime (Task 19).
+    Frozen,
+}
+
 #[derive(Clone, Debug)]
 pub struct Mat2Runtime {
-    pub python: PathBuf,
-    pub script: PathBuf,
+    pub program: PathBuf,
+    /// Args between program and MAT2 flags: dev = [script]; frozen = ["mat2"].
+    pub cli_prefix: Vec<OsString>,
+    /// Args before the file for structured inspection:
+    /// dev = [adapter, upstream_dir]; frozen = ["inspect", "bundled"].
+    pub inspect_prefix: Vec<OsString>,
+    pub kind: RuntimeKind,
 }
 
 /// Mirrors upstream libmat2/abstract.py: output = fname + ".cleaned" + extension,
@@ -104,50 +117,91 @@ fn clean_argv(file: &Path, opts: &CleanOptions) -> Vec<OsString> {
 
 impl Mat2Runtime {
     /// Locate the supplied MAT2 runtime. Order:
-    /// 1. MAT2_WRAPPER_PYTHON + MAT2_WRAPPER_SCRIPT env overrides;
-    /// 2. development tree (project-root/.venv/bin/python + upstream-mat2/mat2,
+    /// 1. MAT2_WRAPPER_PYTHON + MAT2_WRAPPER_SCRIPT env overrides (dev shape);
+    /// 1b. MAT2_WRAPPER_RUNTIME_BIN env override (frozen shape);
+    /// 2. packaged runtime inside the app resource dir (frozen, Task 19);
+    /// 3. development tree (project-root/.venv/bin/python + upstream-mat2/mat2,
     ///    derived from the compile-time manifest dir);
-    /// 3. Err — callers must fail visibly, never fall back to a global `mat2`
+    /// 4. Err — callers must fail visibly, never fall back to a global `mat2`
     ///    or any alternate engine (HANDOFF §3).
-    /// Task 15/19 extend this with the packaged-resource location.
     pub fn resolve() -> Result<Mat2Runtime, String> {
+        Self::resolve_with_hint(None)
+    }
+
+    pub fn resolve_with_hint(resource_dir: Option<&Path>) -> Result<Mat2Runtime, String> {
         if let (Ok(python), Ok(script)) = (
             std::env::var("MAT2_WRAPPER_PYTHON"),
             std::env::var("MAT2_WRAPPER_SCRIPT"),
         ) {
-            let rt = Mat2Runtime {
-                python: PathBuf::from(python),
-                script: PathBuf::from(script),
-            };
-            if rt.python.exists() && rt.script.exists() {
-                return Ok(rt);
+            let python = PathBuf::from(python);
+            let script = PathBuf::from(script);
+            if python.exists() && script.exists() {
+                return Ok(Self::dev(python, script));
             }
             return Err(format!(
                 "MAT2_WRAPPER_PYTHON/MAT2_WRAPPER_SCRIPT point at missing files: {:?} / {:?}",
-                rt.python, rt.script
+                python, script
             ));
+        }
+        if let Ok(bin) = std::env::var("MAT2_WRAPPER_RUNTIME_BIN") {
+            let bin = PathBuf::from(bin);
+            if bin.exists() {
+                return Ok(Self::frozen(bin));
+            }
+            return Err(format!(
+                "MAT2_WRAPPER_RUNTIME_BIN points at a missing file: {:?}",
+                bin
+            ));
+        }
+        if let Some(res) = resource_dir {
+            let bin = res.join("mat2-runtime").join("mat2-runtime");
+            if bin.exists() {
+                return Ok(Self::frozen(bin));
+            }
         }
 
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         if let Some(root) = manifest.ancestors().nth(2) {
-            let rt = Mat2Runtime {
-                python: root.join(".venv/bin/python"),
-                script: root.join("upstream-mat2/mat2"),
-            };
-            if rt.python.exists() && rt.script.exists() {
-                return Ok(rt);
+            let python = root.join(".venv/bin/python");
+            let script = root.join("upstream-mat2/mat2");
+            if python.exists() && script.exists() {
+                return Ok(Self::dev(python, script));
             }
         }
 
-        Err("MAT2 runtime not found (expected <project>/.venv/bin/python and <project>/upstream-mat2/mat2, or MAT2_WRAPPER_PYTHON/MAT2_WRAPPER_SCRIPT)".to_string())
+        Err("MAT2 runtime not found (looked for: env overrides, bundled resources/mat2-runtime, <project>/.venv/bin/python + <project>/upstream-mat2/mat2)".to_string())
+    }
+
+    fn dev(python: PathBuf, script: PathBuf) -> Mat2Runtime {
+        let upstream_dir = script
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let adapter = Self::adapter_path().unwrap_or_else(|_| upstream_dir.join("mat2_inspect.py"));
+        Mat2Runtime {
+            program: python,
+            cli_prefix: vec![script.into()],
+            inspect_prefix: vec![adapter.into(), upstream_dir.into()],
+            kind: RuntimeKind::Dev,
+        }
+    }
+
+    fn frozen(bin: PathBuf) -> Mat2Runtime {
+        Mat2Runtime {
+            program: bin,
+            cli_prefix: vec![OsString::from("mat2")],
+            inspect_prefix: vec![OsString::from("inspect"), OsString::from("bundled")],
+            kind: RuntimeKind::Frozen,
+        }
     }
 
     fn base_command(&self) -> Command {
-        // SECURITY INVARIANT: the program is always the pinned Python
-        // interpreter running the supplied MAT2 script with an argv vector.
-        // No shell is ever involved; no user data reaches a command string.
-        let mut cmd = Command::new(&self.python);
-        cmd.arg(&self.script);
+        // SECURITY INVARIANT: the program is always the pinned runtime
+        // (venv Python + supplied MAT2 script, or the verified frozen bundle)
+        // invoked with an argv vector. No shell is ever involved; no user
+        // data reaches a command string.
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.cli_prefix);
         cmd
     }
 
@@ -189,18 +243,13 @@ impl Mat2Runtime {
     }
 
     /// Structured inspection via the read-only libmat2 JSON adapter
-    /// (resources/mat2_inspect.py). Same libmat2 API the CLI uses; no
+    /// (resources/mat2_inspect.py in dev; the frozen bundle's `inspect`
+    /// subcommand when packaged). Same libmat2 API the CLI uses; no
     /// sanitisation semantics involved. Same no-shell invariant: fixed
-    /// interpreter + argv vector.
+    /// program + argv vector.
     pub fn inspect_json(&self, file: &Path) -> Result<InspectionResult, String> {
-        let adapter = Self::adapter_path()?;
-        let upstream_dir = self
-            .script
-            .parent()
-            .ok_or_else(|| "MAT2 script has no parent directory".to_string())?;
-        let out = Command::new(&self.python)
-            .arg(&adapter)
-            .arg(upstream_dir)
+        let out = Command::new(&self.program)
+            .args(&self.inspect_prefix)
             .arg(file)
             .output()
             .map_err(|e| format!("failed to spawn inspection adapter: {e}"))?;
@@ -517,8 +566,10 @@ mod tests {
     #[test]
     fn invocation_is_never_a_shell() {
         let rt = Mat2Runtime {
-            python: PathBuf::from("/usr/bin/true"),
-            script: PathBuf::from("/script/mat2"),
+            program: PathBuf::from("/usr/bin/true"),
+            cli_prefix: vec![OsString::from("/script/mat2")],
+            inspect_prefix: vec![OsString::from("inspect"), OsString::from("bundled")],
+            kind: RuntimeKind::Dev,
         };
         let mut cmd = rt.base_command();
         cmd.args(clean_argv(Path::new("/tmp/a.jpg"), &CleanOptions::default()));

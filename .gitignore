@@ -8,3 +8,6 @@ node_modules/
 app/src-tauri/target/
 app/dist/
 *.log
+app/src-tauri/resources/mat2-runtime/*
+!app/src-tauri/resources/mat2-runtime/.gitkeep
+build/

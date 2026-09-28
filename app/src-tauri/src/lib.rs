@@ -305,7 +305,7 @@ fn start_clean_job(
         }
     }
 
-    let rt = Mat2Runtime::resolve()?;
+    let rt = Mat2Runtime::resolve_with_hint(resource_hint(&app).as_deref())?;
     for item in &items {
         state.registry.set_status(&item.id, FileStatus::Queued);
     }
@@ -361,19 +361,26 @@ fn cancel_job(state: State<'_, AppState>) -> bool {
     false
 }
 
+fn resource_hint(app: &AppHandle) -> Option<PathBuf> {
+    app.path().resource_dir().ok()
+}
+
 #[tauri::command]
-fn inspect_selection(state: State<'_, AppState>, id: String) -> Result<model::InspectionDto, String> {
+fn inspect_selection(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<model::InspectionDto, String> {
     let snap = state
         .registry
         .snapshot(&id)
         .ok_or_else(|| "unknown selection id".to_string())?;
-    let rt = Mat2Runtime::resolve()?;
+    let rt = Mat2Runtime::resolve_with_hint(resource_hint(&app).as_deref())?;
     let result = rt.inspect_json(&snap.path)?;
     Ok(result.into())
 }
 
-fn diagnostic_output(f: impl Fn(&Mat2Runtime) -> Result<mat2_runner::Mat2Output, String>) -> Result<String, String> {
-    let rt = Mat2Runtime::resolve()?;
+fn diagnostic_output(
+    app: &AppHandle,
+    f: impl Fn(&Mat2Runtime) -> Result<mat2_runner::Mat2Output, String>,
+) -> Result<String, String> {
+    let rt = Mat2Runtime::resolve_with_hint(resource_hint(app).as_deref())?;
     let out = f(&rt)?;
     let mut text = out.stdout;
     if !out.stderr.trim().is_empty() {
@@ -386,30 +393,30 @@ fn diagnostic_output(f: impl Fn(&Mat2Runtime) -> Result<mat2_runner::Mat2Output,
 #[tauri::command]
 fn runtime_diagnostics(app: AppHandle) -> model::DiagnosticsDto {
     let app_version = app.package_info().version.to_string();
-    match Mat2Runtime::resolve() {
+    match Mat2Runtime::resolve_with_hint(resource_hint(&app).as_deref()) {
         Err(e) => mat2_runner::diagnostics_unavailable(&e, &app_version),
         Ok(rt) => mat2_runner::build_diagnostics(rt.version(), rt.check_dependencies(), &app_version),
     }
 }
 
 #[tauri::command]
-fn mat2_version() -> Result<String, String> {
-    diagnostic_output(|rt| rt.version())
+fn mat2_version(app: AppHandle) -> Result<String, String> {
+    diagnostic_output(&app, |rt| rt.version())
 }
 
 #[tauri::command]
-fn mat2_formats() -> Result<String, String> {
-    diagnostic_output(|rt| rt.list_formats())
+fn mat2_formats(app: AppHandle) -> Result<String, String> {
+    diagnostic_output(&app, |rt| rt.list_formats())
 }
 
 #[tauri::command]
-fn mat2_check_dependencies() -> Result<String, String> {
-    diagnostic_output(|rt| rt.check_dependencies())
+fn mat2_check_dependencies(app: AppHandle) -> Result<String, String> {
+    diagnostic_output(&app, |rt| rt.check_dependencies())
 }
 
 #[tauri::command]
-fn mat2_help() -> Result<String, String> {
-    diagnostic_output(|rt| rt.help())
+fn mat2_help(app: AppHandle) -> Result<String, String> {
+    diagnostic_output(&app, |rt| rt.help())
 }
 
 pub fn run() {
