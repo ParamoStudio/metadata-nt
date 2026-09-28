@@ -1440,6 +1440,160 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    fn tool_available(name: &str) -> bool {
+        std::process::Command::new(name)
+            .arg("--help")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+    }
+
+    #[test]
+    fn integration_format_matrix_real_mat2() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let has_ffmpeg = tool_available("ffmpeg");
+        let has_zip = tool_available("zip");
+        let has_tar = tool_available("tar");
+
+        struct Case {
+            name: &'static str,
+            expect_warning: bool,
+            needs: Option<(&'static str, bool)>,
+        }
+        let cases = vec![
+            Case { name: "dirty.jpg", expect_warning: false, needs: None },
+            Case { name: "dirty.png", expect_warning: false, needs: None },
+            // 0.15.0 intentionally keeps structural fields in cleaned PDFs
+            // (creation-date:-1, format:PDF-1.x, mod-date:-1 — "Don't change
+            // the PDF version of cleaned files"); detectable => Warning, by design
+            Case { name: "dirty.pdf", expect_warning: true, needs: None },
+            Case { name: "dirty.docx", expect_warning: false, needs: None },
+            Case { name: "dirty.mp3", expect_warning: false, needs: None },
+            Case { name: "dirty.flac", expect_warning: false, needs: None },
+            Case { name: "dirty.mp4", expect_warning: true, needs: Some(("ffmpeg", has_ffmpeg)) },
+        ];
+
+        let mut ran = 0;
+        for case in cases {
+            if let Some((tool, available)) = case.needs {
+                if !available {
+                    eprintln!("SKIP {}: optional dependency {} unavailable", case.name, tool);
+                    continue;
+                }
+            }
+            let dir = tempdir(&format!("fmt-{}", case.name.replace('.', "_")));
+            let src = dir.join(case.name);
+            fs::copy(fixture(case.name), &src).unwrap();
+            let sha_before = sha256_file(&src).unwrap();
+
+            let events = MockEvents::default();
+            let report = run_job(&rt, vec![item("f", src.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+            let r = &report.results[0];
+
+            let expected = if case.expect_warning { FileStatus::Warning } else { FileStatus::Processed };
+            assert_eq!(r.status, expected, "{} => {:?}: {}", case.name, r.status, r.detail);
+            assert_eq!(sha256_file(&src).unwrap(), sha_before, "{} source must be unchanged", case.name);
+
+            let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+            assert_eq!(outputs.len(), 1, "{} one committed output: {:?}", case.name, outputs);
+            assert!(fs::metadata(&outputs[0]).unwrap().len() > 0, "{} output non-empty", case.name);
+            let summary = r.summary.expect("summary present");
+            if case.expect_warning {
+                assert!(summary.still_detectable > 0, "{} should keep structural metadata", case.name);
+            } else {
+                assert_eq!(summary.still_detectable, 0, "{} post: {:?}", case.name, r.diffs);
+            }
+            ran += 1;
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        assert!(ran >= 6, "expected most formats to run, only {ran} did");
+
+        if has_zip {
+            let dir = tempdir("fmt-zip");
+            fs::copy(fixture("dirty.jpg"), dir.join("member.jpg")).unwrap();
+            fs::copy(fixture("dirty.png"), dir.join("member.png")).unwrap();
+            let zip_path = dir.join("archive.zip");
+            let status = std::process::Command::new("zip")
+                .arg("-j").arg(&zip_path).arg(dir.join("member.jpg")).arg(dir.join("member.png"))
+                .status().unwrap();
+            assert!(status.success());
+            fs::remove_file(dir.join("member.jpg")).unwrap();
+            fs::remove_file(dir.join("member.png")).unwrap();
+
+            let events = MockEvents::default();
+            let report = run_job(&rt, vec![item("z", zip_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+            let r = &report.results[0];
+            assert_eq!(r.status, FileStatus::Processed, "zip => {:?}: {}", r.status, r.detail);
+            assert!(!walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
+            fs::remove_dir_all(&dir).unwrap();
+            ran += 1;
+        } else {
+            eprintln!("SKIP archive.zip: zip CLI unavailable");
+        }
+
+        if has_tar {
+            let dir = tempdir("fmt-tar");
+            fs::copy(fixture("dirty.jpg"), dir.join("member.jpg")).unwrap();
+            let tar_path = dir.join("archive.tar");
+            let status = std::process::Command::new("tar")
+                .env("COPYFILE_DISABLE", "1")
+                .arg("-cf").arg(&tar_path).arg("-C").arg(&dir).arg("member.jpg")
+                .status().unwrap();
+            assert!(status.success());
+            fs::remove_file(dir.join("member.jpg")).unwrap();
+
+            let events = MockEvents::default();
+            let report = run_job(&rt, vec![item("t", tar_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+            let r = &report.results[0];
+            assert_eq!(r.status, FileStatus::Processed, "tar => {:?}: {}", r.status, r.detail);
+            fs::remove_dir_all(&dir).unwrap();
+            ran += 1;
+        } else {
+            eprintln!("SKIP archive.tar: tar CLI unavailable");
+        }
+        eprintln!("format matrix: {ran} cases ran");
+    }
+
+    #[test]
+    fn integration_unknown_member_policies() {
+        let Some(rt) = runtime_or_skip() else { return };
+        if !tool_available("zip") {
+            eprintln!("SKIP unknown-member policies: zip CLI unavailable");
+            return;
+        }
+        let dir = tempdir("policy-zip");
+        fs::copy(fixture("dirty.jpg"), dir.join("photo.jpg")).unwrap();
+        fs::write(dir.join("evil.py"), b"print('unsupported member')\n").unwrap();
+        let zip_path = dir.join("mixed.zip");
+        let status = std::process::Command::new("zip")
+            .arg("-j").arg(&zip_path).arg(dir.join("photo.jpg")).arg(dir.join("evil.py"))
+            .status().unwrap();
+        assert!(status.success());
+
+        // abort (default): unsupported member => clean fails, no output
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("a", zip_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+        assert_eq!(report.results[0].status, FileStatus::Failed, "{:?}", report.results[0]);
+        assert!(walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
+
+        // omit: unsupported member dropped => success
+        let events = MockEvents::default();
+        let settings = JobSettings { unknown_members: crate::mat2_runner::UnknownMembers::Omit, ..Default::default() };
+        let report = run_job(&rt, vec![item("o", zip_path.clone())], &settings, &events, &AtomicBool::new(false));
+        assert!(
+            report.results[0].status == FileStatus::Processed || report.results[0].status == FileStatus::Warning,
+            "omit => {:?}", report.results[0]
+        );
+
+        // keep: never a hard failure (may retain metadata => Warning allowed)
+        let events = MockEvents::default();
+        let settings = JobSettings { unknown_members: crate::mat2_runner::UnknownMembers::Keep, ..Default::default() };
+        let report = run_job(&rt, vec![item("k", zip_path)], &settings, &events, &AtomicBool::new(false));
+        assert_ne!(report.results[0].status, FileStatus::Failed, "keep => {:?}", report.results[0]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     fn walkdir_flat(root: &Path) -> Vec<PathBuf> {
         let mut out = Vec::new();
         let mut stack = vec![root.to_path_buf()];
