@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  DiagnosticsDto,
   FileJobResult,
   InspectionDto,
   JobFinishedEvent,
@@ -18,6 +19,10 @@ import type {
   OutputRootChangedEvent,
   PublicSelectedFile,
 } from "./types";
+
+export function runtimeDiagnostics(): Promise<DiagnosticsDto> {
+  return invoke<DiagnosticsDto>("runtime_diagnostics");
+}
 
 export function listSelection(): Promise<PublicSelectedFile[]> {
   return invoke<PublicSelectedFile[]>("list_selection");

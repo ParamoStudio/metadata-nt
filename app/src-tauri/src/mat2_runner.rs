@@ -315,6 +315,102 @@ pub enum CleanRunOutcome {
     Cancelled,
 }
 
+use crate::model::{DependencyStatus, DiagnosticsDto};
+
+/// Parse `mat2 --check-dependencies` stdout:
+/// "- Cairo: yes " / "- Exiftool: no (optional)" lines.
+pub fn parse_dependency_report(stdout: &str) -> Vec<DependencyStatus> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("- ") else { continue };
+        let Some((name, status)) = rest.split_once(':') else { continue };
+        let status = status.trim();
+        if status.is_empty() {
+            continue;
+        }
+        out.push(DependencyStatus {
+            name: name.trim().to_string(),
+            found: status.starts_with("yes"),
+            required: !status.contains("(optional)"),
+        });
+    }
+    out
+}
+
+pub fn diagnostics_unavailable(reason: &str, app_version: &str) -> DiagnosticsDto {
+    DiagnosticsDto {
+        available: false,
+        fatal: true,
+        version: None,
+        dependencies: Vec::new(),
+        missing_required: Vec::new(),
+        missing_optional: Vec::new(),
+        error: Some(reason.to_string()),
+        app_version: app_version.to_string(),
+    }
+}
+
+/// Pure mapping from raw runtime query results to the startup DTO:
+/// fatal whenever the runtime cannot be queried or a REQUIRED dependency is
+/// missing (processing must be disabled, never best-effort — HANDOFF §9.4,
+/// plan Task 15). Missing OPTIONAL deps degrade formats visibly, not fatally.
+pub fn build_diagnostics(
+    version: Result<Mat2Output, String>,
+    deps: Result<Mat2Output, String>,
+    app_version: &str,
+) -> DiagnosticsDto {
+    let version_str = match version {
+        Err(e) => {
+            return DiagnosticsDto {
+                error: Some(e),
+                ..diagnostics_unavailable("version query failed", app_version)
+            }
+        }
+        Ok(v) if !v.success => {
+            return DiagnosticsDto {
+                error: Some(format!("version query exit {:?}", v.exit_code)),
+                ..diagnostics_unavailable("version query failed", app_version)
+            }
+        }
+        Ok(v) => v.stdout.trim().to_string(),
+    };
+
+    let dependencies = match deps {
+        Err(e) => {
+            return DiagnosticsDto {
+                error: Some(e),
+                version: Some(version_str),
+                ..diagnostics_unavailable("dependency check failed", app_version)
+            }
+        }
+        Ok(d) => parse_dependency_report(&d.stdout),
+    };
+
+    let missing_required: Vec<String> = dependencies
+        .iter()
+        .filter(|d| d.required && !d.found)
+        .map(|d| d.name.clone())
+        .collect();
+    let missing_optional: Vec<String> = dependencies
+        .iter()
+        .filter(|d| !d.required && !d.found)
+        .map(|d| d.name.clone())
+        .collect();
+    let fatal = !missing_required.is_empty();
+
+    DiagnosticsDto {
+        available: true,
+        fatal,
+        version: Some(version_str),
+        dependencies,
+        missing_required,
+        missing_optional,
+        error: None,
+        app_version: app_version.to_string(),
+    }
+}
+
 #[cfg(unix)]
 fn terminate_group(child: &mut std::process::Child) {
     let pid = child.id() as libc::pid_t;
@@ -482,6 +578,72 @@ mod tests {
         let p = std::env::temp_dir().join(format!("mat2run-{}-{}-{}", tag, std::process::id(), nanos));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn dependency_report_parsing() {
+        let stdout = "Dependencies for mat2 0.15.0:\n- Cairo: yes \n- Exiftool: no (optional)\n- Mutagen: yes \n- Ffmpeg: no (optional)\n";
+        let deps = parse_dependency_report(stdout);
+        assert_eq!(deps.len(), 4);
+        assert_eq!(
+            deps[0],
+            DependencyStatus { name: "Cairo".into(), found: true, required: true }
+        );
+        assert_eq!(
+            deps[1],
+            DependencyStatus { name: "Exiftool".into(), found: false, required: false }
+        );
+        assert!(parse_dependency_report("nonsense\nno dash here").is_empty());
+    }
+
+    #[test]
+    fn diagnostics_healthy_and_fatal_cases() {
+        let ok_ver = Mat2Output {
+            exit_code: Some(0),
+            success: true,
+            stdout: "mat2 0.15.0\n".into(),
+            stderr: String::new(),
+        };
+        let ok_deps = Mat2Output {
+            exit_code: Some(0),
+            success: true,
+            stdout: "- Cairo: yes\n- Exiftool: no (optional)\n".into(),
+            stderr: String::new(),
+        };
+
+        let d = build_diagnostics(Ok(ok_ver.clone()), Ok(ok_deps.clone()), "0.1.0");
+        assert!(d.available && !d.fatal, "{:?}", d);
+        assert_eq!(d.version.as_deref(), Some("mat2 0.15.0"));
+        assert_eq!(d.missing_optional, vec!["Exiftool".to_string()]);
+        assert_eq!(d.app_version, "0.1.0");
+
+        let bad_deps = Mat2Output {
+            stdout: "- Poppler from PyGobject: no\n- Cairo: yes\n".into(),
+            ..ok_deps.clone()
+        };
+        let d2 = build_diagnostics(Ok(ok_ver.clone()), Ok(bad_deps), "0.1.0");
+        assert!(d2.fatal && d2.available);
+        assert_eq!(d2.missing_required, vec!["Poppler from PyGobject".to_string()]);
+
+        let d3 = build_diagnostics(Err("spawn failed".into()), Ok(ok_deps.clone()), "0.1.0");
+        assert!(!d3.available && d3.fatal && d3.error.is_some());
+
+        let failed_ver = Mat2Output {
+            success: false,
+            exit_code: Some(2),
+            ..ok_ver.clone()
+        };
+        let d4 = build_diagnostics(Ok(failed_ver), Ok(ok_deps), "0.1.0");
+        assert!(d4.fatal && !d4.available);
+    }
+
+    #[test]
+    fn integration_diagnostics_healthy_runtime() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let d = build_diagnostics(rt.version(), rt.check_dependencies(), "test");
+        assert!(d.available && !d.fatal, "{:?}", d);
+        assert!(d.version.unwrap().contains("0.15.0"));
+        assert!(d.missing_required.is_empty());
     }
 
     #[test]

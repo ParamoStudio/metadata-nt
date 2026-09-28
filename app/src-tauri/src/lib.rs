@@ -384,6 +384,15 @@ fn diagnostic_output(f: impl Fn(&Mat2Runtime) -> Result<mat2_runner::Mat2Output,
 }
 
 #[tauri::command]
+fn runtime_diagnostics(app: AppHandle) -> model::DiagnosticsDto {
+    let app_version = app.package_info().version.to_string();
+    match Mat2Runtime::resolve() {
+        Err(e) => mat2_runner::diagnostics_unavailable(&e, &app_version),
+        Ok(rt) => mat2_runner::build_diagnostics(rt.version(), rt.check_dependencies(), &app_version),
+    }
+}
+
+#[tauri::command]
 fn mat2_version() -> Result<String, String> {
     diagnostic_output(|rt| rt.version())
 }
@@ -422,6 +431,7 @@ pub fn run() {
             open_dangerzone_site,
             open_privacytools_site,
             reveal_output,
+            runtime_diagnostics,
             mat2_version,
             mat2_formats,
             mat2_check_dependencies,

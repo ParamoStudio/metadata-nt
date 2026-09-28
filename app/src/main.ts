@@ -29,6 +29,7 @@ interface UiState {
   customRootName: string | null;
   lastJobId: string | null;
   hasCommittedOutputs: boolean;
+  runtimeFatal: boolean;
 }
 
 const state: UiState = {
@@ -43,6 +44,7 @@ const state: UiState = {
   customRootName: null,
   lastJobId: null,
   hasCommittedOutputs: false,
+  runtimeFatal: true,
 };
 
 const MAX_LOG_LINES = 500;
@@ -270,7 +272,49 @@ function updateProcessBar(): void {
   if (!btn) return;
   const count = checkedCount();
   btn.textContent = count === 1 ? "PROCESS 1 FILE" : `PROCESS ${count} FILES`;
-  btn.disabled = count === 0 || state.jobRunning;
+  btn.disabled = count === 0 || state.jobRunning || state.runtimeFatal;
+}
+
+async function runStartupDiagnostics(): Promise<void> {
+  const statusEl = el("mat2-status-value");
+  const versionEl = el("version-info");
+  try {
+    const d = await ipc.runtimeDiagnostics();
+    state.runtimeFatal = d.fatal;
+    if (d.fatal) {
+      if (statusEl) {
+        statusEl.textContent = "Problem";
+        statusEl.className = "problem";
+      }
+      const reason = d.available
+        ? `MAT2 runtime is incomplete\nMissing required dependencies: ${d.missing_required.join(", ")}\nProcessing is disabled until diagnostics pass.`
+        : `MAT2 runtime unavailable\n${d.error ?? "unknown reason"}\nProcessing is disabled until diagnostics pass.`;
+      showInspectionMessage("error", reason);
+      logInfo(`MAT2 runtime problem: ${d.error ?? `missing required: ${d.missing_required.join(", ")}`}`);
+    } else {
+      if (statusEl) {
+        statusEl.textContent = "Ready";
+        statusEl.className = "ok";
+      }
+      if (versionEl && d.version) {
+        versionEl.textContent = `${d.version} · App ${d.app_version}`;
+      }
+      logInfo(`MAT2 runtime ready: ${d.version ?? "version unknown"}`);
+      if (d.missing_optional.length > 0) {
+        logInfo(
+          `Optional components unavailable (affected formats will report Unsupported): ${d.missing_optional.join(", ")}`,
+        );
+      }
+    }
+  } catch (err) {
+    state.runtimeFatal = true;
+    if (statusEl) {
+      statusEl.textContent = "Problem";
+      statusEl.className = "problem";
+    }
+    logError("startup diagnostics", err);
+  }
+  updateProcessBar();
 }
 
 function showInspectionMessage(kind: "ok" | "warning" | "error", text: string): void {
@@ -572,6 +616,10 @@ function bind(id: string, handler: () => void): void {
 async function startJob(): Promise<void> {
   const ids = state.files.filter((f) => state.checked.has(f.id)).map((f) => f.id);
   if (ids.length === 0 || state.jobRunning) return;
+  if (state.runtimeFatal) {
+    logInfo("Processing is disabled: MAT2 runtime diagnostics failed.");
+    return;
+  }
   const settings = readSettings();
   if (!settings) return;
   if (settings.inplace) {
@@ -603,11 +651,7 @@ function updateRevealButton(): void {
 }
 
 function boot(): void {
-  const statusValue = el("mat2-status-value");
-  if (statusValue) {
-    statusValue.textContent = "Ready (diagnostics in Advanced)";
-    statusValue.className = "ok";
-  }
+  void runStartupDiagnostics();
 
   bind("btn-add-files", () => ipc.selectFiles().catch((e) => logError("select files", e)));
   bind("btn-add-folder", () => ipc.selectFolder().catch((e) => logError("select folder", e)));

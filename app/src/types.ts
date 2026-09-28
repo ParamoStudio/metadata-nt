@@ -94,3 +94,21 @@ export interface InspectionDto {
   error: string | null;
   entries: MetadataEntry[];
 }
+
+export interface DependencyStatus {
+  name: string;
+  found: boolean;
+  required: boolean;
+}
+
+/** Result of `runtime_diagnostics` (Rust DiagnosticsDto). */
+export interface DiagnosticsDto {
+  available: boolean;
+  fatal: boolean;
+  version: string | null;
+  dependencies: DependencyStatus[];
+  missing_required: string[];
+  missing_optional: string[];
+  error: string | null;
+  app_version: string;
+}

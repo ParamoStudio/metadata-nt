@@ -64,6 +64,25 @@ pub struct InspectionDto {
     pub entries: Vec<MetadataEntry>,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct DependencyStatus {
+    pub name: String,
+    pub found: bool,
+    pub required: bool,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct DiagnosticsDto {
+    pub available: bool,
+    pub fatal: bool,
+    pub version: Option<String>,
+    pub dependencies: Vec<DependencyStatus>,
+    pub missing_required: Vec<String>,
+    pub missing_optional: Vec<String>,
+    pub error: Option<String>,
+    pub app_version: String,
+}
+
 impl From<InspectionResult> for InspectionDto {
     fn from(r: InspectionResult) -> Self {
         InspectionDto {

@@ -521,6 +521,7 @@ select {
   border: 1px solid var(--border);
   background: var(--panel-2);
   word-break: break-word;
+  white-space: pre-line;
   user-select: text;
 }
 
