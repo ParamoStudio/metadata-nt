@@ -13,6 +13,7 @@ mod mat2_runner;
 mod model;
 mod output;
 mod selection;
+mod synthetic;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -173,6 +174,8 @@ struct JobSettingsDto {
     output: String,
     #[serde(default)]
     inplace: bool,
+    #[serde(default)]
+    synthetic: Option<synthetic::SyntheticOptions>,
 }
 
 #[tauri::command]
@@ -297,6 +300,11 @@ fn start_clean_job(
     };
 
     if settings.inplace {
+        if settings.synthetic.map(|s| s.enabled).unwrap_or(false) {
+            return Err(
+                "synthetic metadata cannot be combined with destructive in-place mode (decoys are never written to originals)".into(),
+            );
+        }
         if !state.inplace_armed.swap(false, Ordering::SeqCst) {
             return Err(
                 "destructive in-place mode is not armed for this session; enable it explicitly in Advanced settings"
@@ -306,6 +314,25 @@ fn start_clean_job(
     }
 
     let rt = Mat2Runtime::resolve_with_hint(resource_hint(&app).as_deref())?;
+
+    let synth_rt = if settings.synthetic.map(|s| s.enabled).unwrap_or(false) {
+        let srt = synthetic::SyntheticRuntime::resolve(&rt, resource_hint(&app).as_deref())?;
+        let sha = srt.pack_sha256()?;
+        if sha != synthetic::EXPECTED_PACK_SHA256 {
+            return Err(format!(
+                "synthetic profile pack failed integrity pin: {sha} != {}",
+                synthetic::EXPECTED_PACK_SHA256
+            ));
+        }
+        let v = srt.validate_pack()?;
+        if v.get("ok") != Some(&serde_json::json!(true)) {
+            return Err("synthetic profile pack failed schema validation".into());
+        }
+        Some(srt)
+    } else {
+        None
+    };
+
     for item in &items {
         state.registry.set_status(&item.id, FileStatus::Queued);
     }
@@ -327,6 +354,7 @@ fn start_clean_job(
         unknown_members,
         custom_output_root,
         inplace: settings.inplace,
+        synthetic: settings.synthetic,
     };
     let events = Arc::new(TauriJobEvents {
         app: app.clone(),
@@ -335,7 +363,7 @@ fn start_clean_job(
     let job_id_for_thread = job_id.clone();
 
     std::thread::spawn(move || {
-        let report = jobs::run_job(&rt, items, &job_settings, events.as_ref(), &cancel);
+        let report = jobs::run_job(&rt, items, &job_settings, events.as_ref(), &cancel, synth_rt.as_ref());
         for r in &report.results {
             app.state::<AppState>().registry.set_status(&r.id, r.status);
         }
@@ -399,6 +427,47 @@ fn runtime_diagnostics(app: AppHandle) -> model::DiagnosticsDto {
     }
 }
 
+/// Synthetic add-on: generate a throwaway profile preview for one extension.
+/// The seed is ephemeral (per call), never persisted; the frontend receives
+/// display data only — no ids that could become a fingerprint.
+#[tauri::command]
+fn synthetic_preview(
+    app: AppHandle,
+    ext: String,
+    options: synthetic::SyntheticOptions,
+) -> Result<serde_json::Value, String> {
+    if !ext.chars().all(|c| c.is_ascii_alphanumeric()) || ext.len() > 8 {
+        return Err("invalid extension".into());
+    }
+    let rt = Mat2Runtime::resolve_with_hint(resource_hint(&app).as_deref())?;
+    let srt = synthetic::SyntheticRuntime::resolve(&rt, resource_hint(&app).as_deref())?;
+    if srt.pack_sha256()? != synthetic::EXPECTED_PACK_SHA256 {
+        return Err("synthetic profile pack failed integrity pin".into());
+    }
+    let seed = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+    let resp = srt.preview(&options, &seed, "preview", &ext.to_lowercase())?;
+    if resp.get("ok") != Some(&serde_json::json!(true)) {
+        let reason = resp
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("preview failed");
+        return Err(reason.to_string());
+    }
+    Ok(resp.get("profile").cloned().unwrap_or(serde_json::json!({})))
+}
+
+#[tauri::command]
+fn synthetic_pack_info(app: AppHandle) -> Result<serde_json::Value, String> {
+    let rt = Mat2Runtime::resolve_with_hint(resource_hint(&app).as_deref())?;
+    let srt = synthetic::SyntheticRuntime::resolve(&rt, resource_hint(&app).as_deref())?;
+    let sha = srt.pack_sha256()?;
+    let mut info = srt.validate_pack()?;
+    if let Some(obj) = info.as_object_mut() {
+        obj.insert("pinned".to_string(), serde_json::json!(sha == synthetic::EXPECTED_PACK_SHA256));
+    }
+    Ok(info)
+}
+
 #[tauri::command]
 fn mat2_version(app: AppHandle) -> Result<String, String> {
     diagnostic_output(&app, |rt| rt.version())
@@ -439,6 +508,8 @@ pub fn run() {
             open_privacytools_site,
             reveal_output,
             runtime_diagnostics,
+            synthetic_preview,
+            synthetic_pack_info,
             mat2_version,
             mat2_formats,
             mat2_check_dependencies,

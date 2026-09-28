@@ -77,6 +77,19 @@ exit 1
 SHIM
 chmod +x "${STAGE}/bin/exiftool"
 
+# Synthetic add-on: pinned profile pack (owner-supplied, integrity-gated)
+SYNTH_PACK="${REPO_ROOT}/addon-fauxmeta/synthetic_metadata_profiles_v1.json"
+EXPECTED_PACK_SHA256="5bf6b12939d05defb4f8fd9b132a7a12be8c0cc211ce4522160905696e8efb1d"
+ACTUAL_PACK_SHA256="$(shasum -a 256 "$SYNTH_PACK" | awk '{print $1}')"
+if [ "$ACTUAL_PACK_SHA256" != "$EXPECTED_PACK_SHA256" ]; then
+  echo "FAIL: synthetic pack SHA-256 mismatch (supply-chain pin)"
+  echo "  expected: $EXPECTED_PACK_SHA256"
+  echo "  actual:   $ACTUAL_PACK_SHA256"
+  exit 1
+fi
+echo "synthetic pack sha256 pinned OK"
+cp "$SYNTH_PACK" "${BUILD_DIR}/synthetic_metadata_profiles_v1.json"
+
 log "Stage 2b: dylib closure (poppler, rsvg, ffmpeg)"
 python3 "${REPO_ROOT}/scripts/packaging/collect_dylibs.py" "$STAGELIB" \
   "${BREW_PREFIX}/lib/libpoppler-glib.8.dylib" \
@@ -100,10 +113,13 @@ cd "$BUILD_DIR"
 PYTHONPATH="$SRC_UPSTREAM" "$VENV/bin/pyinstaller" \
   --onedir --name mat2-runtime \
   --paths "$SRC_UPSTREAM" \
+  --paths "${REPO_ROOT}/scripts/packaging" \
   --collect-submodules libmat2 \
+  --collect-submodules synthetic_engine \
   --add-binary "${GI_CAIRO}:gi" \
   --add-data "${SRC_UPSTREAM}:upstream" \
   --add-data "${BUILD_DIR}/mat2_inspect.py:." \
+  --add-data "${BUILD_DIR}/synthetic_metadata_profiles_v1.json:." \
   --add-data "${STAGE}/exiftool:exiftool" \
   --add-data "${STAGE}/bin/exiftool:bin" \
   --add-data "${STAGELIB}:." \
@@ -160,6 +176,33 @@ done
 "${CLEAN_ENV[@]}" "$RT" inspect bundled dirty.cleaned.jpg | grep -q '"ok": true' \
   || { echo "FAIL: frozen inspect adapter"; FAILURES=$((FAILURES+1)); }
 echo "PASS inspect adapter (frozen)"
+
+# synthetic add-on: engine selftest + pack pin + full roundtrip on the cleaned jpeg
+SYNTH_SELFTEST="$(printf '{"action":"selftest"}' | "${CLEAN_ENV[@]}" "$RT" synthetic 2>/dev/null)"
+echo "$SYNTH_SELFTEST" | grep -q '"ok": true' \
+  || { echo "FAIL: frozen synthetic selftest: $SYNTH_SELFTEST"; FAILURES=$((FAILURES+1)); }
+echo "PASS synthetic selftest (frozen)"
+
+SYNTH_VALIDATE="$(printf '{"action":"validate_pack"}' | "${CLEAN_ENV[@]}" "$RT" synthetic 2>/dev/null)"
+echo "$SYNTH_VALIDATE" | grep -q "$EXPECTED_PACK_SHA256" \
+  || { echo "FAIL: bundled pack sha mismatch: $SYNTH_VALIDATE"; FAILURES=$((FAILURES+1)); }
+echo "PASS synthetic pack pin (frozen)"
+
+SYNTH_REQ="$(cat <<JSON
+{"action":"apply",
+ "options":{"profile_scope":"per_file","identity_mode":"alias","location_mode":"gps","technical_mode":"synthetic","serial_mode":"empty"},
+ "job_seed":"battery-seed-$(date +%s)-abcdef0123456789",
+ "selection_id":"battery-jpg",
+ "file":{"path":"${SMOKE_DIR}/dirty.cleaned.jpg","ext":"jpg","original_values":["Created with GIMP"]}}
+JSON
+)"
+SYNTH_APPLY="$(printf '%s' "$SYNTH_REQ" | "${CLEAN_ENV[@]}" "$RT" synthetic 2>/dev/null)"
+echo "$SYNTH_APPLY" | grep -q '"synthetic_state": "applied_verified"' \
+  || { echo "FAIL: frozen synthetic apply: $SYNTH_APPLY"; FAILURES=$((FAILURES+1)); }
+echo "PASS synthetic apply+verify roundtrip (frozen, bundled exiftool)"
+echo "$SYNTH_APPLY" | grep -qi "created with gimp" \
+  && { echo "FAIL: original value present in synthetic response"; FAILURES=$((FAILURES+1)); } || true
+
 [ "$FAILURES" -eq 0 ] || { echo "FAIL: ${FAILURES} smoke failures"; exit 1; }
 cd "$REPO_ROOT"
 
@@ -176,6 +219,9 @@ cat > "${DIST}/PACKAGE_INFO.json" <<EOF
   "upstream_version": "0.15.0",
   "mat2_python": "${PYTHON_VERSION}",
   "pyinstaller": "${PYINSTALLER_VERSION}",
+  "synthetic_pack": "synthetic_metadata_profiles_v1.json",
+  "synthetic_pack_schema_version": "1.0.0",
+  "synthetic_pack_sha256": "${ACTUAL_PACK_SHA256}",
   "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "built_on": "$(sw_vers -productVersion) $(uname -m)",
   "bundle_size_bytes": $(du -sk "${DIST}/mat2-runtime" | awk '{print $1 * 1024}'),

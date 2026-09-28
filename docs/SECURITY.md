@@ -49,6 +49,31 @@ Planned additions (each lands with its rationale line here in the same commit):
 
 - (none pending — decisions below resolved Task 14 without new permissions)
 
+### Synthetic metadata add-on (owner-approved scope extension)
+
+Owner decision supersedes the v1 non-goal "no metadata spoofing"; the add-on is
+implemented per `addon-fauxmeta/SYNTHETIC_METADATA_HANDOFF.md` with these
+enforced properties:
+
+| Property | Enforcement | Verified by |
+|---|---|---|
+| MAT2 remains the only sanitiser | Synthetic stage runs ONLY after Phase-A clean verification, on the staged cleaned file; never on originals; never in in-place mode (command-level rejection + run_job neutralisation) | `run_job_inplace_neutralizes_synthetic`, pipeline order in `clean_one_tracked` |
+| Clean output survives synthetic failure | `.pre-synth` snapshot + atomic `rename` restore; result becomes Warning "MAT2 cleaning succeeded… Clean output is available.", never false success | `run_job_synthetic_engine_failure_keeps_clean_output` |
+| No frontend-controlled writer arguments | Frontend submits only the typed 6-field `SyntheticOptions`; every exiftool/mutagen/OOXML argument is engine-constructed from validated profiles; engine invoked as fixed program + argv + stdin JSON, never a shell | `options_serialize_for_frontend_and_engine`, `test_writer_args_are_shell_free_and_dashed_safe`, hostile-filename tests |
+| Pack integrity | `synthetic_metadata_profiles_v1.json` SHA-256 pinned in Rust (`EXPECTED_PACK_SHA256`) AND in the packaging script; schema validation at every job start (`validate_pack`); semantic-field scrub with recorded warnings | `dev_runtime_resolves_and_pack_is_pinned`, `test_validate_pack`, packaging Stage 2/4 |
+| CSPRNG, no persistent identity | Job seed = 2× UUIDv4 (getrandom-backed), memory-only, per-job; per-file derivation sha256(seed‖selection_id); never embedded in output, never logged | `profile_provenance_internal_only` validator check + `preview_has_no_seed_or_ids` |
+| No semantic claims | Title/Subject/Keywords/Artist/Album/Composer/Copyright/Publisher hard-filtered at pack load and re-checked at generation and validation | `test_no_semantic_candidate_fields_survive`, `test_semantic_fields_never_generated`, `semantic_fields_off` validator |
+| Original values never reused/reappear | Generator rejects profiles reusing original fragments; verifier re-reads output and fails on reappearance (baseline-aware: structural MAT2 survivors excluded by key denylist, EXIF-spec constants excluded) | `test_validator_rejects_original_value_reuse`, `test_original_values_never_reappear_guard` |
+| GPS/serial off by default | Defaults enforced in pack validation (`synthetic_mode/serial_mode/location_mode` must ship off) and in Rust `SyntheticOptions::default` | `test_malformed_pack_rejected`, `defaults_are_private` |
+| No second exiftool/mutagen copy | Writers use the runtime's bundled exiftool (PATH-injected) and bundled mutagen — same pinned copies MAT2 uses | packaging manifest, frozen battery |
+| OOXML adapter safety | Memory-only archive rewrite (no extraction to disk), unsafe member names rejected (ZipSlip defense), payload bytes copied verbatim | `test_zipslip_member_rejected`, `test_docx_core_properties_only` |
+| Recipe reality | Every Tier-1 candidate tag proven writable+readable with the pinned exiftool at test time | `test_tier1_candidate_tags_writable` (HANDOFF §19) |
+
+New commands (allow-list updated, 21 total): `synthetic_preview` (ephemeral
+seed, display data only, extension validated `[a-z0-9]{1..8}`),
+`synthetic_pack_info` (diagnostics). No new Tauri permissions; capability set
+unchanged (`core:event:default` only).
+
 ### Task 14 decision: external links & Reveal without the opener plugin
 
 `external.rs` opens the three hard-coded URLs and the job's committed output

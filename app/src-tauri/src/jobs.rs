@@ -14,6 +14,7 @@ use crate::model::{
     diff_metadata, summarize, DiffSummary, FileStatus, MetadataDiff, MetadataEntry,
 };
 use crate::output::{self, OutputMode};
+use crate::synthetic::{removed_original_values, ApplyResponse, SyntheticField, SyntheticOptions, SyntheticRuntime};
 
 #[derive(Debug)]
 pub enum PipelineError {
@@ -128,6 +129,7 @@ pub struct CleanOutcome {
     pub pre_metadata: Vec<MetadataEntry>,
     pub post_metadata: Vec<MetadataEntry>,
     pub clean_output: Mat2Output,
+    pub synthetic: SyntheticOutcome,
 }
 
 fn first_line(s: &str) -> String {
@@ -139,6 +141,35 @@ pub enum PipelinePhase {
     Inspecting,
     Processing,
     Verifying,
+    SyntheticWriting,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticState {
+    NotRequested,
+    AppliedVerified,
+    UnavailableFormat,
+    FailedKeptClean,
+}
+
+#[derive(Clone, Debug)]
+pub struct SyntheticOutcome {
+    pub state: SyntheticState,
+    pub fields: Vec<SyntheticField>,
+    pub note: Option<String>,
+}
+
+impl Default for SyntheticOutcome {
+    fn default() -> Self {
+        Self { state: SyntheticState::NotRequested, fields: Vec::new(), note: None }
+    }
+}
+
+pub struct SynthJob<'a> {
+    pub rt: &'a SyntheticRuntime,
+    pub options: SyntheticOptions,
+    pub job_seed: String,
 }
 
 /// Normal-mode pipeline for ONE file (INTERFACE.md §14):
@@ -153,9 +184,10 @@ pub fn clean_one(
     canonical_output_root: &Path,
     relative_dir: Option<&Path>,
 ) -> Result<CleanOutcome, PipelineError> {
-    clean_one_tracked(rt, ws, source, opts, canonical_output_root, relative_dir, &AtomicBool::new(false), &|_| Ok(()))
+    clean_one_tracked(rt, ws, source, opts, canonical_output_root, relative_dir, &AtomicBool::new(false), &|_| Ok(()), None, "")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn clean_one_tracked(
     rt: &Mat2Runtime,
     ws: &JobWorkspace,
@@ -165,6 +197,8 @@ pub fn clean_one_tracked(
     relative_dir: Option<&Path>,
     cancel: &AtomicBool,
     on_phase: &dyn Fn(PipelinePhase) -> Result<(), PipelineError>,
+    synth: Option<&SynthJob>,
+    selection_id: &str,
 ) -> Result<CleanOutcome, PipelineError> {
     let check_cancel = |phase: PipelinePhase| -> Result<(), PipelineError> {
         if cancel.load(Ordering::SeqCst) {
@@ -247,6 +281,81 @@ pub fn clean_one_tracked(
     if cancel.load(Ordering::SeqCst) {
         return Err(PipelineError::Cancelled);
     }
+
+    // Optional synthetic stage (owner-approved add-on): runs ONLY on the
+    // MAT2-cleaned, Phase-A-verified staged output — never on the original,
+    // never before clean verification. The verified clean bytes are
+    // snapshotted first; any synthetic failure restores them atomically so
+    // the committed output is always either verified-clean or
+    // verified-clean+verified-synthetic (HANDOFF §2/§20/§22).
+    let mut synthetic = SyntheticOutcome::default();
+    if let Some(sj) = synth {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(PipelineError::Cancelled);
+        }
+        on_phase(PipelinePhase::SyntheticWriting)?;
+        let ext = produced
+            .extension()
+            .map(|e| e.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let diffs = diff_metadata(&pre.entries, &post.entries);
+        let originals = removed_original_values(&diffs);
+        let backup = stage.join(format!(
+            "{}.pre-synth",
+            produced.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        ));
+        let snapshot = fs::copy(&produced, &backup)
+            .map_err(|e| PipelineError::Io(format!("cannot snapshot clean output: {e}")));
+        let response: Result<ApplyResponse, String> = match snapshot {
+            Err(e) => Err(e.to_string()),
+            Ok(_) => sj.rt.apply(&sj.options, &sj.job_seed, selection_id, &produced, &ext, &originals),
+        };
+        match response {
+            Ok(resp) if resp.ok && resp.synthetic_state == "applied_verified" => {
+                let _ = fs::remove_file(&backup);
+                synthetic = SyntheticOutcome {
+                    state: SyntheticState::AppliedVerified,
+                    fields: resp.written,
+                    note: None,
+                };
+            }
+            Ok(resp) if resp.synthetic_state == "unavailable_format" => {
+                let _ = fs::remove_file(&backup);
+                synthetic = SyntheticOutcome {
+                    state: SyntheticState::UnavailableFormat,
+                    fields: Vec::new(),
+                    note: resp.error,
+                };
+            }
+            Ok(resp) => {
+                fs::rename(&backup, &produced).map_err(|_| {
+                    PipelineError::OutputInvalid(
+                        "synthetic write failed and the clean snapshot could not be restored"
+                            .to_string(),
+                    )
+                })?;
+                synthetic = SyntheticOutcome {
+                    state: SyntheticState::FailedKeptClean,
+                    fields: Vec::new(),
+                    note: resp.error.or_else(|| Some(resp.synthetic_state.clone())),
+                };
+            }
+            Err(e) => {
+                fs::rename(&backup, &produced).map_err(|_| {
+                    PipelineError::OutputInvalid(
+                        "synthetic write failed and the clean snapshot could not be restored"
+                            .to_string(),
+                    )
+                })?;
+                synthetic = SyntheticOutcome {
+                    state: SyntheticState::FailedKeptClean,
+                    fields: Vec::new(),
+                    note: Some(e),
+                };
+            }
+        }
+    }
+
     let cleaned_name = produced
         .file_name()
         .ok_or_else(|| PipelineError::OutputInvalid("produced output has no file name".into()))?
@@ -263,6 +372,7 @@ pub fn clean_one_tracked(
         pre_metadata: pre.entries.clone(),
         post_metadata: post.entries.clone(),
         clean_output: cleaned,
+        synthetic,
     })
 }
 
@@ -355,6 +465,7 @@ pub fn clean_one_inplace(
         pre_metadata: pre.entries.clone(),
         post_metadata: post.entries.clone(),
         clean_output: cleaned,
+        synthetic: SyntheticOutcome::default(),
     })
 }
 
@@ -382,6 +493,9 @@ pub struct FileJobResult {
     /// True when a verified output was committed (frontend may offer Reveal).
     /// The path itself never crosses IPC; reveal_output resolves it Rust-side.
     pub committed: bool,
+    pub synthetic_state: SyntheticState,
+    pub synthetic_fields: Vec<SyntheticField>,
+    pub synthetic_note: Option<String>,
 }
 
 pub trait JobEvents: Send + Sync {
@@ -400,6 +514,8 @@ pub struct JobSettings {
     /// Destructive mode: clean sources in place (no staging, no output root).
     /// Requires the session arm gate in lib.rs before a job may use it.
     pub inplace: bool,
+    /// Owner-approved synthetic metadata add-on; None/off = classic behavior.
+    pub synthetic: Option<SyntheticOptions>,
 }
 
 impl Default for JobSettings {
@@ -410,6 +526,7 @@ impl Default for JobSettings {
             unknown_members: UnknownMembers::Abort,
             custom_output_root: None,
             inplace: false,
+            synthetic: None,
         }
     }
 }
@@ -445,6 +562,21 @@ fn relative_dir_of(relative: &Path) -> Option<PathBuf> {
     }
 }
 
+fn base_result(item: &JobItem, status: FileStatus, detail: String) -> FileJobResult {
+    FileJobResult {
+        id: item.id.clone(),
+        display_name: item.display_name.clone(),
+        status,
+        detail,
+        diffs: Vec::new(),
+        summary: None,
+        committed: false,
+        synthetic_state: SyntheticState::NotRequested,
+        synthetic_fields: Vec::new(),
+        synthetic_note: None,
+    }
+}
+
 /// Sequential batch execution (v1: no parallelism). Green Processed requires
 /// the full verified pipeline; anything else is Warning/Failed/Unsupported/
 /// Cancelled — never a false success.
@@ -454,6 +586,7 @@ pub fn run_job(
     settings: &JobSettings,
     events: &dyn JobEvents,
     cancel: &AtomicBool,
+    synth_rt: Option<&SyntheticRuntime>,
 ) -> JobReport {
     let ws = if settings.inplace {
         None
@@ -463,15 +596,7 @@ pub fn run_job(
             Err(e) => {
                 let results: Vec<FileJobResult> = items
                     .iter()
-                    .map(|it| FileJobResult {
-                        id: it.id.clone(),
-                        display_name: it.display_name.clone(),
-                        status: FileStatus::Failed,
-                        detail: sanitize(&e),
-                        diffs: Vec::new(),
-                        summary: None,
-                        committed: false,
-                    })
+                    .map(|it| base_result(it, FileStatus::Failed, sanitize(&e)))
                     .collect();
                 for r in &results {
                     events.status(&r.id, FileStatus::Failed);
@@ -479,6 +604,22 @@ pub fn run_job(
                 return JobReport { results, cancelled: false };
             }
         }
+    };
+
+    // Synthetic add-on: memory-only CSPRNG job seed (HANDOFF §8); inert when
+    // disabled or when the destructive in-place mode is active.
+    let synth_enabled = settings
+        .synthetic
+        .map(|s| s.enabled)
+        .unwrap_or(false)
+        && !settings.inplace;
+    let synth_job = match (synth_enabled, synth_rt) {
+        (true, Some(srt)) => Some(SynthJob {
+            rt: srt,
+            options: settings.synthetic.unwrap_or_default(),
+            job_seed: format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()),
+        }),
+        _ => None,
     };
 
     let timestamp = output::timestamp_now();
@@ -502,15 +643,7 @@ pub fn run_job(
 
     for item in &items {
         if cancel.load(Ordering::SeqCst) {
-            let r = FileJobResult {
-                id: item.id.clone(),
-                display_name: item.display_name.clone(),
-                status: FileStatus::Cancelled,
-                detail: "Cancelled before processing".into(),
-                diffs: Vec::new(),
-                summary: None,
-                committed: false,
-            };
+            let r = base_result(item, FileStatus::Cancelled, "Cancelled before processing".into());
             events.status(&item.id, FileStatus::Cancelled);
             events.file_result(&r, None);
             results.push(r);
@@ -525,6 +658,7 @@ pub fn run_job(
                 PipelinePhase::Inspecting => FileStatus::Inspecting,
                 PipelinePhase::Processing => FileStatus::Processing,
                 PipelinePhase::Verifying => FileStatus::Verifying,
+                PipelinePhase::SyntheticWriting => FileStatus::SyntheticWriting,
             };
             events.status(&id_for_events, st);
             match phase {
@@ -538,6 +672,7 @@ pub fn run_job(
                     log_line(events, &msg)
                 }
                 PipelinePhase::Verifying => log_line(events, &format!("Verifying output of {} with MAT2", item.display_name)),
+                PipelinePhase::SyntheticWriting => log_line(events, &format!("Writing synthetic metadata to cleaned output of {}", item.display_name)),
             }
             Ok(())
         };
@@ -565,15 +700,11 @@ pub fn run_job(
             }) {
                 Ok(r) => r.clone(),
                 Err(e) => {
-                    let r = FileJobResult {
-                        id: item.id.clone(),
-                        display_name: item.display_name.clone(),
-                        status: FileStatus::Failed,
-                        detail: sanitize(&format!("cannot prepare output location: {e}")),
-                        diffs: Vec::new(),
-                        summary: None,
-                        committed: false,
-                    };
+                    let r = base_result(
+                        item,
+                        FileStatus::Failed,
+                        sanitize(&format!("cannot prepare output location: {e}")),
+                    );
                     log_line(events, &format!("{}: {}", item.display_name, r.detail));
                     events.status(&item.id, FileStatus::Failed);
                     events.file_result(&r, None);
@@ -596,6 +727,8 @@ pub fn run_job(
                 relative_dir.as_deref(),
                 cancel,
                 &on_phase,
+                synth_job.as_ref(),
+                &item.id,
             )
         };
 
@@ -616,7 +749,7 @@ pub fn run_job(
                     log_line(events, &format!("MAT2 output created for {}", item.display_name));
                     log_line(events, &format!("Committed output for {}", item.display_name));
                 }
-                let (status, detail) = if o.post_metadata.is_empty() {
+                let (mut status, mut detail) = if o.post_metadata.is_empty() {
                     log_line(events, &format!("Result: 0 metadata fields detectable by MAT2 in {}", item.display_name));
                     (FileStatus::Processed, "No metadata detectable by MAT2".to_string())
                 } else {
@@ -624,6 +757,33 @@ pub fn run_job(
                     log_line(events, &format!("Result: {n} metadata fields still detectable by MAT2 in {}", item.display_name));
                     (FileStatus::Warning, format!("MAT2 still detects {n} metadata fields"))
                 };
+
+                let mut synthetic_note: Option<String> = None;
+                match o.synthetic.state {
+                    SyntheticState::AppliedVerified => {
+                        log_line(events, &format!("Synthetic metadata added and verified for {}", item.display_name));
+                        detail = if o.post_metadata.is_empty() {
+                            "Original identifying metadata removed. Synthetic metadata added and verified.".to_string()
+                        } else {
+                            format!("{detail}. Synthetic metadata added and verified")
+                        };
+                    }
+                    SyntheticState::FailedKeptClean => {
+                        status = FileStatus::Warning;
+                        let note = o.synthetic.note.clone().unwrap_or_else(|| "unknown error".into());
+                        log_line(events, &format!("Synthetic metadata could not be applied for {} ({note}); clean output kept", item.display_name));
+                        detail = "MAT2 cleaning succeeded. Synthetic metadata could not be applied. Clean output is available.".to_string();
+                        synthetic_note = Some(sanitize(&note));
+                    }
+                    SyntheticState::UnavailableFormat => {
+                        let note = "Synthetic mode unavailable for this format".to_string();
+                        log_line(events, &format!("{note}: {}", item.display_name));
+                        detail = format!("{detail}. {note}");
+                        synthetic_note = Some(note);
+                    }
+                    SyntheticState::NotRequested => {}
+                }
+
                 let r = FileJobResult {
                     id: item.id.clone(),
                     display_name: item.display_name.clone(),
@@ -632,39 +792,24 @@ pub fn run_job(
                     diffs,
                     summary: Some(summary),
                     committed: true,
+                    synthetic_state: o.synthetic.state,
+                    synthetic_fields: o.synthetic.fields,
+                    synthetic_note,
                 };
                 events.status(&item.id, status);
                 events.file_result(&r, Some(&o.final_path));
                 results.push(r);
                 continue;
             }
-            Err(PipelineError::Cancelled) => FileJobResult {
-                id: item.id.clone(),
-                display_name: item.display_name.clone(),
-                status: FileStatus::Cancelled,
-                detail: "Cancelled during processing".into(),
-                diffs: Vec::new(),
-                summary: None,
-                committed: false,
-            },
-            Err(PipelineError::Unsupported(m)) => FileJobResult {
-                id: item.id.clone(),
-                display_name: item.display_name.clone(),
-                status: FileStatus::Unsupported,
-                detail: sanitize(&format!("MAT2 does not support this format ({m}); not processed")),
-                diffs: Vec::new(),
-                summary: None,
-                committed: false,
-            },
-            Err(e) => FileJobResult {
-                id: item.id.clone(),
-                display_name: item.display_name.clone(),
-                status: FileStatus::Failed,
-                detail: sanitize(&e.to_string()),
-                diffs: Vec::new(),
-                summary: None,
-                committed: false,
-            },
+            Err(PipelineError::Cancelled) => {
+                base_result(item, FileStatus::Cancelled, "Cancelled during processing".into())
+            }
+            Err(PipelineError::Unsupported(m)) => base_result(
+                item,
+                FileStatus::Unsupported,
+                sanitize(&format!("MAT2 does not support this format ({m}); not processed")),
+            ),
+            Err(e) => base_result(item, FileStatus::Failed, sanitize(&e.to_string())),
         };
         log_line(events, &format!("{}: {}", result.display_name, result.detail));
         events.status(&item.id, result.status);
@@ -979,7 +1124,7 @@ mod tests {
 
         let events = MockEvents::default();
         let cancel = AtomicBool::new(false);
-        let report = run_job(&rt, vec![item("id-a", a.clone()), item("id-b", b.clone())], &JobSettings::default(), &events, &cancel);
+        let report = run_job(&rt, vec![item("id-a", a.clone()), item("id-b", b.clone())], &JobSettings::default(), &events, &cancel, None);
 
         assert!(!report.cancelled);
         assert_eq!(report.results.len(), 2);
@@ -1025,7 +1170,7 @@ mod tests {
         fs::write(&weird, b"hello").unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("g", good.clone()), item("w", weird.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("g", good.clone()), item("w", weird.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
 
         let g = report.results.iter().find(|r| r.id == "g").unwrap();
         let w = report.results.iter().find(|r| r.id == "w").unwrap();
@@ -1049,7 +1194,7 @@ mod tests {
         fs::copy(fixture("dirty.mp4"), &vid).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("v", vid)], &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("v", vid)], &JobSettings::default(), &events, &AtomicBool::new(false), None);
         let v = &report.results[0];
         assert_eq!(v.status, FileStatus::Warning, "{:?}", v);
         assert!(v.summary.unwrap().still_detectable > 0);
@@ -1066,7 +1211,7 @@ mod tests {
 
         let events = MockEvents::default();
         let cancel = AtomicBool::new(true);
-        let report = run_job(&rt, vec![item("a", a.clone())], &JobSettings::default(), &events, &cancel);
+        let report = run_job(&rt, vec![item("a", a.clone())], &JobSettings::default(), &events, &cancel, None);
         assert!(report.cancelled);
         assert_eq!(report.results[0].status, FileStatus::Cancelled);
         assert!(!dir.join(crate::output::OUTPUT_DIR_NAME).join("").exists()
@@ -1092,7 +1237,7 @@ mod tests {
             }
         });
 
-        let report = run_job(&rt, vec![item("a", a), item("b", b)], &JobSettings::default(), &events, &cancel);
+        let report = run_job(&rt, vec![item("a", a), item("b", b)], &JobSettings::default(), &events, &cancel, None);
         assert!(report.cancelled);
         let ra = report.results.iter().find(|r| r.id == "a").unwrap();
         let rb = report.results.iter().find(|r| r.id == "b").unwrap();
@@ -1113,7 +1258,7 @@ mod tests {
         fs::remove_file(&a).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false), None);
         assert_eq!(report.results[0].status, FileStatus::Failed);
         assert!(report.results[0].detail.to_lowercase().contains("missing")
             || report.results[0].detail.to_lowercase().contains("unreadable"), "{}", report.results[0].detail);
@@ -1132,7 +1277,7 @@ mod tests {
         fs::set_permissions(&a, perms).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("a", a.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("a", a.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
         assert_eq!(report.results[0].status, FileStatus::Failed, "{:?}", report.results[0]);
 
         let mut perms = fs::metadata(&a).unwrap().permissions();
@@ -1149,7 +1294,7 @@ mod tests {
         fs::write(&a, b"definitely not a jpeg").unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("a", a)], &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("a", a)], &JobSettings::default(), &events, &AtomicBool::new(false), None);
         let r = &report.results[0];
         assert_eq!(r.status, FileStatus::Failed);
         assert_ne!(r.status, FileStatus::Processed);
@@ -1167,7 +1312,7 @@ mod tests {
 
         let settings = JobSettings { custom_output_root: Some(out_dir.clone()), ..Default::default() };
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("a", a)], &settings, &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("a", a)], &settings, &events, &AtomicBool::new(false), None);
         assert_eq!(report.results[0].status, FileStatus::Processed);
         assert!(!src_dir.join(crate::output::OUTPUT_DIR_NAME).exists(), "nothing beside source in custom mode");
         let outputs = walkdir_flat(&out_dir);
@@ -1202,7 +1347,7 @@ mod tests {
             },
         ];
         let events = MockEvents::default();
-        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false), None);
         assert!(report.results.iter().all(|r| r.status == FileStatus::Processed), "{:?}", report.results);
 
         let out_root = batch.join(crate::output::OUTPUT_DIR_NAME);
@@ -1245,6 +1390,7 @@ mod tests {
             &JobSettings::default(),
             &events,
             &cancel,
+            None,
         );
         let elapsed = started.elapsed();
 
@@ -1294,7 +1440,7 @@ mod tests {
 
         let events = MockEvents::default();
         let settings = JobSettings { inplace: true, ..Default::default() };
-        let report = run_job(&rt, vec![item("a", src.clone())], &settings, &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("a", src.clone())], &settings, &events, &AtomicBool::new(false), None);
 
         let r = &report.results[0];
         assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
@@ -1321,7 +1467,7 @@ mod tests {
 
         let events = MockEvents::default();
         let settings = JobSettings { inplace: true, ..Default::default() };
-        let report = run_job(&rt, vec![item("w", weird.clone())], &settings, &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("w", weird.clone())], &settings, &events, &AtomicBool::new(false), None);
 
         assert_eq!(report.results[0].status, FileStatus::Unsupported);
         assert_eq!(sha256_file(&weird).unwrap(), before, "unsupported source must be untouched");
@@ -1339,7 +1485,7 @@ mod tests {
         let events = MockEvents::default();
         let settings = JobSettings { inplace: true, ..Default::default() };
         let cancel = AtomicBool::new(true);
-        let report = run_job(&rt, vec![item("a", src.clone())], &settings, &events, &cancel);
+        let report = run_job(&rt, vec![item("a", src.clone())], &settings, &events, &cancel, None);
 
         assert_eq!(report.results[0].status, FileStatus::Cancelled);
         assert_eq!(sha256_file(&src).unwrap(), before, "cancelled source must be untouched");
@@ -1384,7 +1530,7 @@ mod tests {
         items.push(item("hpdf", script_pdf));
 
         let events = MockEvents::default();
-        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, items, &JobSettings::default(), &events, &AtomicBool::new(false), None);
 
         for r in &report.results {
             assert!(
@@ -1429,7 +1575,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("l", link.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("l", link.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
 
         let r = &report.results[0];
         assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
@@ -1488,7 +1634,7 @@ mod tests {
             let sha_before = sha256_file(&src).unwrap();
 
             let events = MockEvents::default();
-            let report = run_job(&rt, vec![item("f", src.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+            let report = run_job(&rt, vec![item("f", src.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
             let r = &report.results[0];
 
             let expected = if case.expect_warning { FileStatus::Warning } else { FileStatus::Processed };
@@ -1522,7 +1668,7 @@ mod tests {
             fs::remove_file(dir.join("member.png")).unwrap();
 
             let events = MockEvents::default();
-            let report = run_job(&rt, vec![item("z", zip_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+            let report = run_job(&rt, vec![item("z", zip_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
             let r = &report.results[0];
             assert_eq!(r.status, FileStatus::Processed, "zip => {:?}: {}", r.status, r.detail);
             assert!(!walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
@@ -1544,7 +1690,7 @@ mod tests {
             fs::remove_file(dir.join("member.jpg")).unwrap();
 
             let events = MockEvents::default();
-            let report = run_job(&rt, vec![item("t", tar_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+            let report = run_job(&rt, vec![item("t", tar_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
             let r = &report.results[0];
             assert_eq!(r.status, FileStatus::Processed, "tar => {:?}: {}", r.status, r.detail);
             fs::remove_dir_all(&dir).unwrap();
@@ -1573,14 +1719,14 @@ mod tests {
 
         // abort (default): unsupported member => clean fails, no output
         let events = MockEvents::default();
-        let report = run_job(&rt, vec![item("a", zip_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("a", zip_path.clone())], &JobSettings::default(), &events, &AtomicBool::new(false), None);
         assert_eq!(report.results[0].status, FileStatus::Failed, "{:?}", report.results[0]);
         assert!(walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME)).is_empty());
 
         // omit: unsupported member dropped => success
         let events = MockEvents::default();
         let settings = JobSettings { unknown_members: crate::mat2_runner::UnknownMembers::Omit, ..Default::default() };
-        let report = run_job(&rt, vec![item("o", zip_path.clone())], &settings, &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("o", zip_path.clone())], &settings, &events, &AtomicBool::new(false), None);
         assert!(
             report.results[0].status == FileStatus::Processed || report.results[0].status == FileStatus::Warning,
             "omit => {:?}", report.results[0]
@@ -1589,8 +1735,138 @@ mod tests {
         // keep: never a hard failure (may retain metadata => Warning allowed)
         let events = MockEvents::default();
         let settings = JobSettings { unknown_members: crate::mat2_runner::UnknownMembers::Keep, ..Default::default() };
-        let report = run_job(&rt, vec![item("k", zip_path)], &settings, &events, &AtomicBool::new(false));
+        let report = run_job(&rt, vec![item("k", zip_path)], &settings, &events, &AtomicBool::new(false), None);
         assert_ne!(report.results[0].status, FileStatus::Failed, "keep => {:?}", report.results[0]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn synth_runtime_or_skip(rt: &Mat2Runtime) -> Option<crate::synthetic::SyntheticRuntime> {
+        if std::process::Command::new("exiftool").arg("-ver").output().is_err() {
+            eprintln!("SKIP synthetic: exiftool not on PATH");
+            return None;
+        }
+        match crate::synthetic::SyntheticRuntime::resolve(rt, None) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("SKIP synthetic: {e}");
+                None
+            }
+        }
+    }
+
+    fn synth_settings() -> JobSettings {
+        JobSettings {
+            synthetic: Some(crate::synthetic::SyntheticOptions {
+                enabled: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn run_job_synthetic_applied_and_verified_on_jpeg() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else { return };
+        let dir = tempdir("synth-jpg");
+        let src = dir.join("photo.jpg");
+        fs::copy(fixture("dirty.jpg"), &src).unwrap();
+        let sha_before = sha256_file(&src).unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("s", src.clone())], &synth_settings(), &events, &AtomicBool::new(false), Some(&srt));
+        let r = &report.results[0];
+
+        assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
+        assert_eq!(r.synthetic_state, SyntheticState::AppliedVerified);
+        assert!(!r.synthetic_fields.is_empty(), "expected written decoy fields");
+        assert!(r.detail.contains("Synthetic metadata added and verified"), "{}", r.detail);
+        assert_eq!(sha256_file(&src).unwrap(), sha_before, "original untouched");
+
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 1);
+        let out_str = outputs[0].to_string_lossy().into_owned();
+        let readback = std::process::Command::new("exiftool").arg("-json").arg(&out_str).output().unwrap();
+        let blob = String::from_utf8_lossy(&readback.stdout).to_lowercase();
+        assert!(!blob.contains("created with gimp"), "original comment must be absent");
+        let some_value_written = r.synthetic_fields.iter().any(|f| {
+            let v = f.value.to_lowercase();
+            v.len() >= 4 && blob.contains(&v)
+        });
+        assert!(some_value_written, "a generated decoy value must be readable in the output");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_synthetic_unavailable_format_still_delivers_clean() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else { return };
+        let dir = tempdir("synth-mixed");
+        let img = dir.join("photo.jpg");
+        let txt = dir.join("notes.txt");
+        fs::copy(fixture("dirty.jpg"), &img).unwrap();
+        fs::copy(fixture("dirty.txt"), &txt).unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("i", img), item("t", txt)], &synth_settings(), &events, &AtomicBool::new(false), Some(&srt));
+        let ri = report.results.iter().find(|r| r.id == "i").unwrap();
+        let rt_ = report.results.iter().find(|r| r.id == "t").unwrap();
+        assert_eq!(ri.synthetic_state, SyntheticState::AppliedVerified);
+        assert_eq!(rt_.status, FileStatus::Processed, "{:?}", rt_);
+        assert_eq!(rt_.synthetic_state, SyntheticState::UnavailableFormat);
+        assert!(rt_.detail.contains("Synthetic mode unavailable"), "{}", rt_.detail);
+        assert!(rt_.committed);
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 2, "{:?}", outputs);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_synthetic_engine_failure_keeps_clean_output() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else { return };
+        let broken = srt.with_pack(PathBuf::from("/nonexistent/synthetic_pack.json"));
+        let dir = tempdir("synth-broken");
+        let src = dir.join("photo.jpg");
+        fs::copy(fixture("dirty.jpg"), &src).unwrap();
+
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("s", src)], &synth_settings(), &events, &AtomicBool::new(false), Some(&broken));
+        let r = &report.results[0];
+
+        assert_eq!(r.status, FileStatus::Warning, "{:?}", r);
+        assert_eq!(r.synthetic_state, SyntheticState::FailedKeptClean);
+        assert!(r.detail.contains("MAT2 cleaning succeeded"), "{}", r.detail);
+        assert!(r.detail.contains("Clean output is available"), "{}", r.detail);
+        assert!(r.synthetic_fields.is_empty());
+        assert!(r.committed);
+
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 1, "restored clean output must be committed");
+        let readback = std::process::Command::new("exiftool").arg("-json").arg(&outputs[0]).output().unwrap();
+        let blob = String::from_utf8_lossy(&readback.stdout);
+        assert!(!blob.contains("xmp.did:"), "no decoys may survive a failed synthetic run");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_inplace_neutralizes_synthetic() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else { return };
+        let dir = tempdir("synth-inplace");
+        let src = dir.join("photo.jpg");
+        fs::copy(fixture("dirty.jpg"), &src).unwrap();
+
+        let settings = JobSettings {
+            inplace: true,
+            synthetic: Some(crate::synthetic::SyntheticOptions { enabled: true, ..Default::default() }),
+            ..Default::default()
+        };
+        let events = MockEvents::default();
+        let report = run_job(&rt, vec![item("s", src.clone())], &settings, &events, &AtomicBool::new(false), Some(&srt));
+        let r = &report.results[0];
+        assert_eq!(r.synthetic_state, SyntheticState::NotRequested, "in-place must never carry decoys");
+        assert!(r.status == FileStatus::Processed || r.status == FileStatus::Warning);
         fs::remove_dir_all(&dir).unwrap();
     }
 

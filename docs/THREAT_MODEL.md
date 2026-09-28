@@ -88,4 +88,32 @@ containing filenames; no parsing of hostile documents by the GUI (no previews).
 ## 5. Marketing constraints
 
 Never described as "anonymous", "untraceable", "100% clean" or "state-actor
-proof". The epistemic limit of `--show` is preserved in UI copy.
+proof". The epistemic limit of `--show` is preserved in UI copy. Synthetic-mode
+copy is likewise constrained: "Original identifying metadata removed /
+Synthetic metadata added and verified" — never "forensically indistinguishable".
+
+## 6. Synthetic metadata add-on (owner-approved scope extension)
+
+The add-on writes decoy metadata to MAT2-cleaned staged files. New surfaces and
+their constraints (full enforcement matrix in `docs/SECURITY.md`):
+
+- **New process surface**: the synthetic engine runs inside the SAME pinned
+  runtime binary (frozen `synthetic` subcommand / dev `-m synthetic_engine`);
+  writers spawn only the runtime-bundled exiftool (argv arrays, `--` before
+  paths) and in-process mutagen/zipfile — no new binaries, no shell, no network.
+- **New data surface**: the profile pack is read-only bundled data, SHA-256
+  pinned at build AND job start, schema-validated, semantic fields hard-filtered.
+- **Trust boundary unchanged**: frontend submits only typed options; profiles,
+  tag names and writer arguments are backend/engine-constructed.
+- **Originals untouchable**: synthetic never runs in in-place mode; the writer
+  only ever receives the staged cleaned path inside the private workspace;
+  clean bytes are snapshotted before writing and atomically restored on any
+  synthetic failure (fail path delivers the verified clean output + Warning).
+- **Anti-fingerprinting**: CSPRNG job seed, memory-only, per-file derivation;
+  no seed/selection id ever embedded in output or logs; per-file XMP
+  InstanceIDs never repeat across a batch.
+- **Residual risk (accepted by owner)**: decoy metadata is, by design, false
+  provenance. A forensic examiner may detect inconsistency between synthetic
+  values and file content; the UI labels synthetic values explicitly and the
+  GPS opt-in carries a falsity warning. This does not weaken the clean-only
+  workflow, which remains the default.

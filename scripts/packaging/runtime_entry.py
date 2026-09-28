@@ -166,6 +166,17 @@ def main() -> int:
         sys.argv = ['mat2_inspect.py'] + rest
         runpy.run_path(adapter, run_name='__main__')
         return 0
+    if cmd == 'synthetic':
+        import json
+        from synthetic_engine.__main__ import handle_request
+        try:
+            req = json.load(sys.stdin)
+        except ValueError as exc:
+            print(json.dumps({'ok': False, 'stage': 'protocol', 'error': 'invalid JSON: %s' % exc}))
+            return 0
+        req.setdefault('pack_path', os.path.join(internal, 'synthetic_metadata_profiles_v1.json'))
+        print(json.dumps(handle_request(req)))
+        return 0
     if cmd == 'probe':
         return _probe()
     print('unknown subcommand: %s' % cmd)

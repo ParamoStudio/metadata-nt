@@ -98,6 +98,53 @@
                 <p class="helper warning hidden" id="unknown-members-keep-warning">
                   Keeping unknown archive members may preserve metadata.
                 </p>
+                <div id="synthetic-block">
+                  <label>
+                    <input type="checkbox" id="opt-synthetic" />
+                    Add plausible decoy metadata (synthetic)
+                  </label>
+                  <p class="helper" id="synthetic-explainer">
+                    MAT2 cleans first; decoy metadata is written only to the verified
+                    cleaned copy — never to your originals. Off by default and not
+                    remembered between launches.
+                  </p>
+                  <div id="synthetic-options" class="hidden">
+                    <fieldset class="synth-group">
+                      <legend>Profile behavior</legend>
+                      <label><input type="radio" name="synth-scope" value="per_file" checked /> Independent profile per file</label>
+                      <label><input type="radio" name="synth-scope" value="batch" /> Consistent profile for this batch</label>
+                    </fieldset>
+                    <fieldset class="synth-group">
+                      <legend>Identity fields</legend>
+                      <label><input type="radio" name="synth-identity" value="alias" checked /> Synthetic alias where plausible</label>
+                      <label><input type="radio" name="synth-identity" value="empty" /> Leave empty</label>
+                    </fieldset>
+                    <fieldset class="synth-group">
+                      <legend>Location</legend>
+                      <label><input type="radio" name="synth-location" value="off" checked /> No synthetic location</label>
+                      <label><input type="radio" name="synth-location" value="city" /> City/country only</label>
+                      <label><input type="radio" name="synth-location" value="gps" /> Include synthetic GPS</label>
+                      <p class="helper warning hidden" id="synthetic-gps-warning">
+                        Synthetic GPS is deliberately false. It may affect how recipients interpret the file.
+                      </p>
+                    </fieldset>
+                    <fieldset class="synth-group">
+                      <legend>Technical/device metadata</legend>
+                      <label><input type="radio" name="synth-technical" value="synthetic" checked /> Synthetic where plausible</label>
+                      <label><input type="radio" name="synth-technical" value="empty" /> Leave empty</label>
+                    </fieldset>
+                    <fieldset class="synth-group">
+                      <legend>Device serial identifiers</legend>
+                      <label><input type="radio" name="synth-serial" value="empty" checked /> Leave empty</label>
+                      <label><input type="radio" name="synth-serial" value="generate" /> Generate synthetic identifiers [expert]</label>
+                    </fieldset>
+                    <div id="synthetic-preview-row">
+                      <button id="btn-synth-preview" type="button">Preview synthetic profile</button>
+                      <span id="synthetic-preview-ext" class="helper"></span>
+                    </div>
+                    <pre id="synthetic-preview" class="hidden" aria-label="Synthetic profile preview"></pre>
+                  </div>
+                </div>
                 <label id="inplace-row">
                   <input type="checkbox" id="opt-inplace" />
                   Replace original files

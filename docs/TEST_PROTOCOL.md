@@ -124,6 +124,43 @@ Fixture: `.omo/tmp/qa-fixtures/batch/` (a.jpg, b.jpg, c.png, d.pdf, ignore.txt).
    job's own output folder(s). ☐
 3. Offline run: disable Wi-Fi → full Test C batch still works end-to-end. ☐
 
+## Test H — synthetic metadata add-on (owner-approved extension)
+
+Prereq: Advanced → "Add plausible decoy metadata (synthetic)" visible; toggle
+OFF by default on every launch (verify after restart).
+
+1. Toggle on → options groups appear (Profile behavior / Identity / Location /
+   Technical / Serial); serial + GPS default to safe options. ☐
+2. Select `DSCN0010.jpg` → "Preview synthetic profile" → coherent preview
+   (archetype, device with plausible year, created date, timezone; no seed or
+   selection id visible). Preview twice → different values (throwaway seed). ☐
+3. Location → "Include synthetic GPS" → amber falsity warning appears. ☐
+4. Process DSCN0010.jpg with synthetic on → row status walks …→ Synthetic
+   writing → Processed; detail reads "Original identifying metadata removed.
+   Synthetic metadata added and verified." ☐
+5. Select the processed row → comparison table shows ORIGINAL/CLEANED/
+   SYNTHETIC columns; synthetic values rendered in violet with "Synthetic"
+   status; original GPS/camera values show Removed. ☐
+6. Output verification (terminal):
+   `resources/mat2-runtime/mat2-runtime mat2 -s -- "<output>"` → shows ONLY
+   synthetic values; none of the original GPS/Make/Model/software values. ☐
+7. Observational: exiftool on output shows decoy Make/Model/dates; no
+   "Created with GIMP"-style originals; no seed fragments. ☐
+8. Original DSCN0010.jpg SHA-256 unchanged. ☐
+9. Batch mode: 2+ images, "Consistent profile for this batch" → preview/outputs
+   share persona-device-timezone family; XMP InstanceIDs differ per file
+   (exiftool -XMP-xmpMM:InstanceID on both outputs). ☐
+10. Mixed batch: image + `ignore.txt` → txt Processed with "Synthetic mode
+    unavailable for this format" note; image synthetic-verified. ☐
+11. In-place conflict: enable in-place → synthetic checkbox disables (and
+    vice versa); attempting both via crafted IPC is rejected by the backend
+    (code ref: start_clean_job guard). ☐
+12. Restart app → synthetic toggle OFF again (not persisted). ☐
+13. Failure fallback (dev only): launch with
+    `MAT2_WRAPPER_SYNTH_PACK=/nonexistent` → job start rejected by pack
+    integrity pin (or per-file Warning "Clean output is available" if engine
+    fails mid-job); clean outputs always survive. ☐
+
 ---
 
 ## Results log
@@ -137,3 +174,4 @@ Fixture: `.omo/tmp/qa-fixtures/batch/` (a.jpg, b.jpg, c.png, d.pdf, ignore.txt).
 | E | — | — | pending | — |
 | F | — | — | pending | — |
 | G | — | — | pending | — |
+| H | — | — | pending | — |

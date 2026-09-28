@@ -8,6 +8,7 @@ pub enum FileStatus {
     Queued,
     Processing,
     Verifying,
+    SyntheticWriting,
     Processed,
     Warning,
     Failed,

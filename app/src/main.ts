@@ -15,6 +15,7 @@ import type {
   InspectionDto,
   JobSettingsDto,
   PublicSelectedFile,
+  SyntheticOptions,
 } from "./types";
 
 interface UiState {
@@ -249,6 +250,7 @@ function setJobRunning(running: boolean): void {
     "btn-remove-selected",
     "btn-inspect-only",
     "btn-choose-output",
+    "btn-synth-preview",
     "diag-version",
     "diag-formats",
     "diag-deps",
@@ -366,10 +368,37 @@ function renderMetaTable(entries: InspectionDto["entries"]): void {
   table.classList.remove("hidden");
 }
 
+function normKey(key: string): string {
+  const parts = key.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return parts[parts.length - 1] ?? key.toLowerCase();
+}
+
 function renderDiff(result: FileJobResult): void {
-  const table = mustEl("diff-table");
+  const table = mustEl("diff-table") as HTMLTableElement;
   const body = mustEl("diff-body");
+  const headRow = table.tHead?.rows[0];
+  const synthActive = result.synthetic_state !== "not_requested";
   body.replaceChildren();
+
+  if (headRow) {
+    headRow.replaceChildren();
+    const labels = synthActive
+      ? ["Field", "Original", "Cleaned", "Synthetic", "Status"]
+      : ["Field", "Before", "After", "Status"];
+    for (const label of labels) {
+      const th = document.createElement("th");
+      th.scope = "col";
+      th.textContent = label;
+      headRow.append(th);
+    }
+  }
+
+  const synthByNorm = new Map<string, string>();
+  for (const f of result.synthetic_fields) {
+    synthByNorm.set(normKey(f.field), f.value);
+  }
+  const matchedNorms = new Set<string>();
+
   for (const d of result.diffs) {
     const tr = document.createElement("tr");
     const key = document.createElement("td");
@@ -378,33 +407,89 @@ function renderDiff(result: FileJobResult): void {
     before.textContent = d.before ?? "Not detected";
     const after = document.createElement("td");
     after.textContent = d.after ?? "Removed";
+    tr.append(key, before, after);
+
+    if (synthActive) {
+      const nk = normKey(d.key);
+      const cell = document.createElement("td");
+      const synthValue = synthByNorm.get(nk);
+      if (synthValue !== undefined) {
+        matchedNorms.add(nk);
+        cell.textContent = synthValue;
+        cell.className = "synth-value";
+      } else {
+        cell.textContent = "—";
+      }
+      tr.append(cell);
+    }
+
     const status = document.createElement("td");
     status.textContent = d.status;
     status.className = `status-${d.status.toLowerCase()}`;
-    tr.append(key, before, after, status);
+    tr.append(status);
     body.append(tr);
+  }
+
+  if (synthActive) {
+    for (const f of result.synthetic_fields) {
+      const nk = normKey(f.field);
+      if (matchedNorms.has(nk)) continue;
+      const tr = document.createElement("tr");
+      const key = document.createElement("td");
+      key.textContent = f.field;
+      const before = document.createElement("td");
+      before.textContent = "—";
+      const after = document.createElement("td");
+      after.textContent = "—";
+      const synthCell = document.createElement("td");
+      synthCell.textContent = f.value;
+      synthCell.className = "synth-value";
+      const status = document.createElement("td");
+      status.textContent = "Synthetic";
+      status.className = "status-synthetic";
+      tr.append(key, before, after, synthCell, status);
+      body.append(tr);
+    }
   }
   table.classList.remove("hidden");
 
   const summary = mustEl("diff-summary");
   summary.classList.remove("hidden");
-  if (result.summary && result.summary.still_detectable === 0) {
-    summary.textContent = [
-      `Detected before: ${result.summary.detected_before}`,
-      `Removed: ${result.summary.removed}`,
-      `Changed: ${result.summary.changed}`,
-      "No metadata detectable by MAT2",
-    ].join("\n");
-    mustEl("epistemic-note").classList.remove("hidden");
-  } else if (result.summary) {
-    summary.textContent = [
-      `Detected before: ${result.summary.detected_before}`,
-      `Removed: ${result.summary.removed}`,
-      `Changed: ${result.summary.changed}`,
-      `Still detectable by MAT2: ${result.summary.still_detectable}`,
-    ].join("\n");
+  const lines: string[] = [];
+  if (result.summary) {
+    lines.push(`Detected before: ${result.summary.detected_before}`);
+    lines.push(`Removed: ${result.summary.removed}`);
+    lines.push(`Changed: ${result.summary.changed}`);
+    lines.push(
+      result.summary.still_detectable === 0
+        ? "No metadata detectable by MAT2"
+        : `Still detectable by MAT2: ${result.summary.still_detectable}`,
+    );
   } else {
-    summary.textContent = result.detail;
+    lines.push(result.detail);
+  }
+  switch (result.synthetic_state) {
+    case "applied_verified":
+      lines.push("");
+      lines.push("Original identifying metadata removed");
+      lines.push("Synthetic metadata added and verified");
+      break;
+    case "failed_kept_clean":
+      lines.push("");
+      lines.push("MAT2 cleaning succeeded.");
+      lines.push("Synthetic metadata could not be applied.");
+      lines.push("Clean output is available.");
+      break;
+    case "unavailable_format":
+      lines.push("");
+      lines.push("Synthetic mode unavailable for this format — cleaned normally.");
+      break;
+    case "not_requested":
+      break;
+  }
+  summary.textContent = lines.join("\n");
+  if (result.summary?.still_detectable === 0 || result.synthetic_state === "applied_verified") {
+    mustEl("epistemic-note").classList.remove("hidden");
   }
 }
 
@@ -493,6 +578,46 @@ function renderInspectionData(data: InspectionDto): void {
   renderMetaTable(data.entries);
 }
 
+async function runSyntheticPreview(): Promise<void> {
+  const out = mustEl("synthetic-preview");
+  const extLabel = mustEl("synthetic-preview-ext");
+  const opts = readSyntheticOptions();
+  if (!opts) return;
+  const sel = state.selectedId ? state.files.find((f) => f.id === state.selectedId) : undefined;
+  const source = sel ?? state.files.find((f) => state.checked.has(f.id));
+  if (!source) {
+    extLabel.textContent = "Select or check a file first.";
+    out.classList.add("hidden");
+    return;
+  }
+  const ext = (source.extension ?? "").toLowerCase();
+  if (!ext) {
+    extLabel.textContent = `${source.display_name}: no extension — preview needs a known format.`;
+    out.classList.add("hidden");
+    return;
+  }
+  extLabel.textContent = `for .${ext} (throwaway sample — the job generates fresh profiles)`;
+  out.textContent = "Generating preview…";
+  out.classList.remove("hidden");
+  try {
+    const p = await ipc.syntheticPreview(ext, { ...opts, enabled: true });
+    out.textContent = [
+      `Archetype      ${p.archetype}`,
+      `Device         ${p.device ?? "—"}`,
+      `Software       ${p.software ?? "omitted by sparsity rule"}`,
+      `Created        ${p.created} (${p.utc_offset})`,
+      `Author         ${p.author ?? "—"}`,
+      `Location       ${p.location ?? "disabled"}`,
+      `GPS            ${p.gps ?? "disabled"}`,
+      `Serial         ${p.serial ?? "off"}`,
+      `Timezone       ${p.timezone}`,
+    ].join("\n");
+  } catch (err) {
+    out.textContent = `Preview failed: ${String(err)}`;
+    logError("synthetic preview", err);
+  }
+}
+
 function updateOutputLock(): void {
   const inplaceOn = inputEl("opt-inplace")?.checked === true;
   const fieldset = mustEl("output-mode") as HTMLFieldSetElement;
@@ -512,6 +637,30 @@ function resetInplaceUi(): void {
   updateOutputLock();
 }
 
+function readSyntheticOptions(): SyntheticOptions | null {
+  const enabled = inputEl("opt-synthetic")?.checked === true;
+  const radio = (name: string): string | null =>
+    document.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`)?.value ?? null;
+  const scope = radio("synth-scope") ?? "per_file";
+  const identity = radio("synth-identity") ?? "alias";
+  const location = radio("synth-location") ?? "off";
+  const technical = radio("synth-technical") ?? "synthetic";
+  const serial = radio("synth-serial") ?? "empty";
+  if (scope !== "per_file" && scope !== "batch") return null;
+  if (identity !== "alias" && identity !== "empty") return null;
+  if (location !== "off" && location !== "city" && location !== "gps") return null;
+  if (technical !== "synthetic" && technical !== "empty") return null;
+  if (serial !== "empty" && serial !== "generate") return null;
+  return {
+    enabled,
+    profileScope: scope,
+    identityMode: identity,
+    locationMode: location,
+    technicalMode: technical,
+    serialMode: serial,
+  };
+}
+
 function readSettings(): JobSettingsDto | null {
   const mode = document.querySelector<HTMLInputElement>('input[name="mode"]:checked');
   const output = document.querySelector<HTMLInputElement>('input[name="output"]:checked');
@@ -528,12 +677,21 @@ function readSettings(): JobSettingsDto | null {
     logInfo("Custom output mode selected but no folder chosen yet.");
     return null;
   }
+  const synthetic = readSyntheticOptions();
+  if (inplace.checked && synthetic?.enabled) {
+    showInspectionMessage(
+      "error",
+      "Synthetic metadata cannot be combined with in-place mode. Decoys are never written to originals.",
+    );
+    return null;
+  }
   return {
     lightweight: mode.value === "lightweight",
     verbose: verbose.checked,
     unknownMembers,
     output: output.value === "custom" ? "custom" : "beside",
     inplace: inplace.checked,
+    synthetic,
   };
 }
 
@@ -732,6 +890,14 @@ function boot(): void {
         mustEl("inplace-warning").classList.add("hidden");
         logInfo("Destructive in-place mode disabled.");
       }
+      const sb = inputEl("opt-synthetic");
+      if (sb) {
+        if (inplaceBox.checked) {
+          sb.checked = false;
+          mustEl("synthetic-options").classList.add("hidden");
+        }
+        sb.disabled = inplaceBox.checked;
+      }
       updateOutputLock();
     })();
   });
@@ -746,6 +912,29 @@ function boot(): void {
       closeConfirm(false);
     }
   });
+
+  const synthBox = inputEl("opt-synthetic");
+  synthBox?.addEventListener("change", () => {
+    mustEl("synthetic-options").classList.toggle("hidden", !synthBox.checked);
+    if (synthBox.checked && inplaceBox && inplaceBox.checked) {
+      synthBox.checked = false;
+      mustEl("synthetic-options").classList.add("hidden");
+      showInspectionMessage(
+        "error",
+        "Disable in-place mode first — synthetic metadata is never written to originals.",
+      );
+      return;
+    }
+    if (inplaceBox) inplaceBox.disabled = synthBox.checked;
+    logInfo(synthBox.checked ? "Synthetic metadata mode enabled (decoys, cleaned copies only)." : "Synthetic metadata mode disabled.");
+  });
+  for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="synth-location"]')) {
+    radio.addEventListener("change", () => {
+      const gps = document.querySelector<HTMLInputElement>('input[name="synth-location"]:checked')?.value === "gps";
+      mustEl("synthetic-gps-warning").classList.toggle("hidden", !gps);
+    });
+  }
+  bind("btn-synth-preview", () => void runSyntheticPreview());
 
   for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="output"]')) {
     radio.addEventListener("change", () => {

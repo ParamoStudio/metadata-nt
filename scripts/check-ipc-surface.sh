@@ -27,6 +27,8 @@ ALLOWED=(
   open_privacytools_site
   reveal_output
   runtime_diagnostics
+  synthetic_preview
+  synthetic_pack_info
   mat2_version
   mat2_formats
   mat2_check_dependencies

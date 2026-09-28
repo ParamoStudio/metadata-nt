@@ -24,6 +24,13 @@ No upstream option is unreviewed. Options the supplied version does **not** have
 (and the wrapper therefore does not fake): `--check`, sandbox selection, any
 spoofing/fake-metadata option.
 
+> **Add-on note (owner-approved scope extension):** synthetic decoy metadata is
+> NOT a MAT2 CLI option and never touches MAT2 — it is a wrapper-side optional
+> post-clean stage (`addon-fauxmeta/`, `scripts/packaging/synthetic_engine/`,
+> `app/src-tauri/src/synthetic.rs`). MAT2 remains the only sanitisation engine;
+> the parity table above is unchanged. See `docs/SECURITY.md` §"Synthetic
+> metadata add-on" for the enforcement matrix.
+
 ## In-place (destructive) mode rules — implementation status
 
 Per HANDOFF §9.5, INTERFACE §12/§22, plan Task 13:

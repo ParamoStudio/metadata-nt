@@ -18,10 +18,21 @@ import type {
   JobStatusEvent,
   OutputRootChangedEvent,
   PublicSelectedFile,
+  SyntheticOptions,
+  SyntheticPackInfo,
+  SyntheticPreview,
 } from "./types";
 
 export function runtimeDiagnostics(): Promise<DiagnosticsDto> {
   return invoke<DiagnosticsDto>("runtime_diagnostics");
+}
+
+export function syntheticPreview(ext: string, options: SyntheticOptions): Promise<SyntheticPreview> {
+  return invoke<SyntheticPreview>("synthetic_preview", { ext, options });
+}
+
+export function syntheticPackInfo(): Promise<SyntheticPackInfo> {
+  return invoke<SyntheticPackInfo>("synthetic_pack_info");
 }
 
 export function listSelection(): Promise<PublicSelectedFile[]> {
