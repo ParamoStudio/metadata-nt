@@ -58,7 +58,7 @@ PYTHON_VERSION="$("$VENV/bin/python" --version 2>&1)"
 # ---------------------------------------------------------------- Stage 2
 log "Stage 2: staged inputs"
 rsync -a --exclude '.git' --exclude 'tests' --exclude 'dolphin' --exclude 'nemo' \
-  --exclude 'data' --exclude '.gitlab-ci.yml' "$UPSTREAM/" "$SRC_UPSTREAM/"
+  --exclude 'data' --exclude '.gitlab-ci.yml' --exclude '__pycache__' "$UPSTREAM/" "$SRC_UPSTREAM/"
 cp "${REPO_ROOT}/app/src-tauri/resources/mat2_inspect.py" "${BUILD_DIR}/mat2_inspect.py"
 cp "${REPO_ROOT}/scripts/packaging/runtime_entry.py" "${BUILD_DIR}/runtime_entry.py"
 
@@ -265,6 +265,9 @@ log "Stage 6: install into app resources"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 rsync -a "${DIST}/mat2-runtime/" "$DEST/"
+# Release hygiene: bytecode caches embed the build machine's absolute source
+# paths; public artifacts must not carry build-host metadata.
+find "$DEST" -name '__pycache__' -type d -prune -exec rm -rf {} +
 touch "${DEST}/.gitkeep"
 echo "Installed: ${DEST}"
 echo

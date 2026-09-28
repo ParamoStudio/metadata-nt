@@ -4,6 +4,29 @@ use std::process::Command;
 
 use crate::model::{InspectionResult, parse_inspection_stdout};
 
+/// Dev-tree manifest root for debug binaries. Release binaries must not
+/// embed build-machine paths (public artifacts carry no build-host
+/// metadata); the dev fallback is meaningless there because bundled
+/// resources always resolve first via the resource hint.
+#[cfg(debug_assertions)]
+pub(crate) fn dev_manifest_dir() -> Option<PathBuf> {
+    Some(Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf())
+}
+
+#[cfg(not(debug_assertions))]
+pub(crate) fn dev_manifest_dir() -> Option<PathBuf> {
+    let mut dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    for _ in 0..6 {
+        if dir.file_name().map(|n| n == "src-tauri").unwrap_or(false)
+            && dir.join("resources/mat2_inspect.py").exists()
+        {
+            return Some(dir);
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+    None
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum UnknownMembers {
     #[default]
@@ -162,8 +185,9 @@ impl Mat2Runtime {
             }
         }
 
-        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-        if let Some(root) = manifest.ancestors().nth(2) {
+        if let Some(manifest) = dev_manifest_dir()
+            && let Some(root) = manifest.ancestors().nth(2)
+        {
             let python = root.join(".venv/bin/python");
             let script = root.join("upstream-mat2/mat2");
             if python.exists() && script.exists() {
@@ -277,9 +301,11 @@ impl Mat2Runtime {
                 path
             ));
         }
-        let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/mat2_inspect.py");
-        if dev.exists() {
-            return Ok(dev);
+        if let Some(manifest) = dev_manifest_dir() {
+            let dev = manifest.join("resources/mat2_inspect.py");
+            if dev.exists() {
+                return Ok(dev);
+            }
         }
         Err("inspection adapter mat2_inspect.py not found".to_string())
     }

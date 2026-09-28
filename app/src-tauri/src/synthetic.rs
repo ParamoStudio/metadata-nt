@@ -166,7 +166,8 @@ impl SyntheticRuntime {
                 })
             }
             RuntimeKind::Dev => {
-                let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+                let manifest = crate::mat2_runner::dev_manifest_dir()
+                    .ok_or_else(|| "dev tree not locatable".to_string())?;
                 let root = manifest
                     .ancestors()
                     .nth(2)
