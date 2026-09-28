@@ -20,6 +20,17 @@ use crate::output::{self, OutputMode};
 use crate::synthetic::{
     ApplyResponse, SyntheticField, SyntheticOptions, SyntheticRuntime, removed_original_values,
 };
+use crate::tripwire::{TripwireConfig, TripwireCreator, redact_token_url};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TripwireState {
+    NotRequested,
+    PlantedVerified,
+    FailedCreation,
+    FailedKeptSynthetic,
+    UnavailableFormat,
+}
 
 #[derive(Debug)]
 pub enum PipelineError {
@@ -165,6 +176,8 @@ pub struct SyntheticOutcome {
     pub state: SyntheticState,
     pub fields: Vec<SyntheticField>,
     pub note: Option<String>,
+    pub tripwire_state: TripwireState,
+    pub tripwire_note: Option<String>,
 }
 
 impl Default for SyntheticOutcome {
@@ -173,14 +186,24 @@ impl Default for SyntheticOutcome {
             state: SyntheticState::NotRequested,
             fields: Vec::new(),
             note: None,
+            tripwire_state: TripwireState::NotRequested,
+            tripwire_note: None,
         }
     }
+}
+
+pub struct TripwireRun {
+    pub config: TripwireConfig,
+    /// Injection point: production uses tripwire::create_investigation_tripwire;
+    /// tests use offline stubs (spec §23: automated tests never touch the network).
+    pub creator: TripwireCreator,
 }
 
 pub struct SynthJob<'a> {
     pub rt: &'a SyntheticRuntime,
     pub options: SyntheticOptions,
     pub job_seed: String,
+    pub tripwire: Option<TripwireRun>,
 }
 
 /// Normal-mode pipeline for ONE file (INTERFACE.md §14):
@@ -340,6 +363,25 @@ pub fn clean_one_tracked(
         ));
         let snapshot = fs::copy(&produced, &backup)
             .map_err(|e| PipelineError::Io(format!("cannot snapshot clean output: {e}")));
+
+        // Tripwire token creation (network; only when configured). One token
+        // per output file, sequential (spec §15). Failures never block the
+        // synthetic/clean result (spec §20) and the alert email never leaves
+        // this process except to the hard-coded canarytokens.org endpoint.
+        let mut tripwire_source: Option<String> = None;
+        let mut tripwire_pre_failure: Option<String> = None;
+        if snapshot.is_ok()
+            && let Some(tw) = &sj.tripwire
+        {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(PipelineError::Cancelled);
+            }
+            match (tw.creator)(&tw.config) {
+                Ok(token) => tripwire_source = Some(token.token_url),
+                Err(e) => tripwire_pre_failure = Some(sanitize(&e)),
+            }
+        }
+
         let response: Result<ApplyResponse, String> = match snapshot {
             Err(e) => Err(e.to_string()),
             Ok(_) => sj.rt.apply(
@@ -349,15 +391,50 @@ pub fn clean_one_tracked(
                 &produced,
                 &ext,
                 &originals,
+                tripwire_source.as_deref(),
             ),
         };
+
+        let map_tripwire = |resp: &ApplyResponse| -> (TripwireState, Option<String>) {
+            if let Some(note) = &tripwire_pre_failure {
+                return (TripwireState::FailedCreation, Some(note.clone()));
+            }
+            if sj.tripwire.is_none() {
+                return (TripwireState::NotRequested, None);
+            }
+            match resp.tripwire_state.as_deref() {
+                Some("planted_verified") => (TripwireState::PlantedVerified, None),
+                Some("unavailable_format") => (TripwireState::UnavailableFormat, None),
+                Some("failed_kept_synthetic") => (
+                    TripwireState::FailedKeptSynthetic,
+                    resp.tripwire_error.as_ref().map(|e| sanitize(e)),
+                ),
+                _ => (TripwireState::NotRequested, None),
+            }
+        };
+        // The full token URL must never cross IPC or reach logs (spec §29).
+        let redact_fields = |fields: Vec<SyntheticField>| -> Vec<SyntheticField> {
+            fields
+                .into_iter()
+                .map(|mut f| {
+                    if f.field == "XMP-dc:Source" {
+                        f.value = redact_token_url(&f.value);
+                    }
+                    f
+                })
+                .collect()
+        };
+
         match response {
             Ok(resp) if resp.ok && resp.synthetic_state == "applied_verified" => {
                 let _ = fs::remove_file(&backup);
+                let (tripwire_state, tripwire_note) = map_tripwire(&resp);
                 synthetic = SyntheticOutcome {
                     state: SyntheticState::AppliedVerified,
-                    fields: resp.written,
+                    fields: redact_fields(resp.written),
                     note: None,
+                    tripwire_state,
+                    tripwire_note,
                 };
             }
             Ok(resp) if resp.synthetic_state == "unavailable_format" => {
@@ -366,6 +443,8 @@ pub fn clean_one_tracked(
                     state: SyntheticState::UnavailableFormat,
                     fields: Vec::new(),
                     note: resp.error,
+                    tripwire_state: TripwireState::NotRequested,
+                    tripwire_note: None,
                 };
             }
             Ok(resp) => {
@@ -379,6 +458,8 @@ pub fn clean_one_tracked(
                     state: SyntheticState::FailedKeptClean,
                     fields: Vec::new(),
                     note: resp.error.or_else(|| Some(resp.synthetic_state.clone())),
+                    tripwire_state: TripwireState::NotRequested,
+                    tripwire_note: None,
                 };
             }
             Err(e) => {
@@ -392,6 +473,8 @@ pub fn clean_one_tracked(
                     state: SyntheticState::FailedKeptClean,
                     fields: Vec::new(),
                     note: Some(e),
+                    tripwire_state: TripwireState::NotRequested,
+                    tripwire_note: None,
                 };
             }
         }
@@ -541,6 +624,8 @@ pub struct FileJobResult {
     pub synthetic_state: SyntheticState,
     pub synthetic_fields: Vec<SyntheticField>,
     pub synthetic_note: Option<String>,
+    pub tripwire_state: TripwireState,
+    pub tripwire_note: Option<String>,
 }
 
 pub trait JobEvents: Send + Sync {
@@ -561,6 +646,9 @@ pub struct JobSettings {
     pub inplace: bool,
     /// Owner-approved synthetic metadata add-on; None/off = classic behavior.
     pub synthetic: Option<SyntheticOptions>,
+    /// Test injection point for the tripwire token creator (None = the real
+    /// canarytokens.org client). Never set from frontend input.
+    pub tripwire_creator: Option<TripwireCreator>,
 }
 
 impl Default for JobSettings {
@@ -572,6 +660,7 @@ impl Default for JobSettings {
             custom_output_root: None,
             inplace: false,
             synthetic: None,
+            tripwire_creator: None,
         }
     }
 }
@@ -619,6 +708,8 @@ fn base_result(item: &JobItem, status: FileStatus, detail: String) -> FileJobRes
         synthetic_state: SyntheticState::NotRequested,
         synthetic_fields: Vec::new(),
         synthetic_note: None,
+        tripwire_state: TripwireState::NotRequested,
+        tripwire_note: None,
     }
 }
 
@@ -656,13 +747,35 @@ pub fn run_job(
 
     // Synthetic add-on: memory-only CSPRNG job seed (HANDOFF §8); inert when
     // disabled or when the destructive in-place mode is active.
-    let synth_enabled = settings.synthetic.map(|s| s.enabled).unwrap_or(false) && !settings.inplace;
+    let synth_enabled = settings
+        .synthetic
+        .as_ref()
+        .map(|s| s.enabled)
+        .unwrap_or(false)
+        && !settings.inplace;
     let synth_job = match (synth_enabled, synth_rt) {
-        (true, Some(srt)) => Some(SynthJob {
-            rt: srt,
-            options: settings.synthetic.unwrap_or_default(),
-            job_seed: format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()),
-        }),
+        (true, Some(srt)) => {
+            let options = settings.synthetic.clone().unwrap_or_default();
+            let tripwire = options
+                .tripwire
+                .as_ref()
+                .filter(|t| t.enabled)
+                .map(|t| TripwireRun {
+                    config: TripwireConfig {
+                        email: t.email.clone(),
+                        redirect_url: t.redirect_url.clone(),
+                    },
+                    creator: settings
+                        .tripwire_creator
+                        .unwrap_or(crate::tripwire::create_investigation_tripwire),
+                });
+            Some(SynthJob {
+                rt: srt,
+                options,
+                job_seed: format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()),
+                tripwire,
+            })
+        }
         _ => None,
     };
 
@@ -897,6 +1010,63 @@ pub fn run_job(
                     SyntheticState::NotRequested => {}
                 }
 
+                let mut tripwire_note: Option<String> = None;
+                match o.synthetic.tripwire_state {
+                    TripwireState::PlantedVerified => {
+                        let redacted = o
+                            .synthetic
+                            .fields
+                            .iter()
+                            .find(|f| f.field == "XMP-dc:Source")
+                            .map(|f| f.value.clone());
+                        match redacted {
+                            Some(tok) => log_line(
+                                events,
+                                &format!(
+                                    "Investigation tripwire planted and verified for {} (token {tok})",
+                                    item.display_name
+                                ),
+                            ),
+                            None => log_line(
+                                events,
+                                &format!(
+                                    "Investigation tripwire planted and verified for {}",
+                                    item.display_name
+                                ),
+                            ),
+                        }
+                        if o.synthetic.state == SyntheticState::AppliedVerified {
+                            detail =
+                                format!("{detail} Investigation Tripwire planted and verified.");
+                        }
+                    }
+                    TripwireState::FailedCreation | TripwireState::FailedKeptSynthetic => {
+                        status = FileStatus::Warning;
+                        let verb = match o.synthetic.tripwire_state {
+                            TripwireState::FailedCreation => "created",
+                            _ => "planted",
+                        };
+                        tripwire_note = o.synthetic.tripwire_note.clone();
+                        log_line(
+                            events,
+                            &format!(
+                                "Investigation tripwire could not be {verb} for {}",
+                                item.display_name
+                            ),
+                        );
+                        detail = format!(
+                            "File cleaning succeeded. Synthetic metadata was applied. Investigation Tripwire could not be {verb}. No tripwire was planted."
+                        );
+                    }
+                    TripwireState::UnavailableFormat => {
+                        let note = "Investigation Tripwire unavailable for this format".to_string();
+                        log_line(events, &format!("{note}: {}", item.display_name));
+                        detail = format!("{detail}. {note}");
+                        tripwire_note = Some(note);
+                    }
+                    TripwireState::NotRequested => {}
+                }
+
                 let r = FileJobResult {
                     id: item.id.clone(),
                     display_name: item.display_name.clone(),
@@ -908,6 +1078,8 @@ pub fn run_job(
                     synthetic_state: o.synthetic.state,
                     synthetic_fields: o.synthetic.fields,
                     synthetic_note,
+                    tripwire_state: o.synthetic.tripwire_state,
+                    tripwire_note,
                 };
                 events.status(&item.id, status);
                 events.file_result(&r, Some(&o.final_path));
@@ -2542,6 +2714,201 @@ mod tests {
             "in-place must never carry decoys"
         );
         assert!(r.status == FileStatus::Processed || r.status == FileStatus::Warning);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn stub_creator_ok(
+        _cfg: &crate::tripwire::TripwireConfig,
+    ) -> Result<crate::tripwire::TripwireToken, String> {
+        Ok(crate::tripwire::TripwireToken {
+            token_url: "http://canarytokens.com/about/stubbedtoken0000000000000/payments.js".into(),
+        })
+    }
+
+    fn stub_creator_fail(
+        _cfg: &crate::tripwire::TripwireConfig,
+    ) -> Result<crate::tripwire::TripwireToken, String> {
+        Err("stubbed creation failure (offline test)".into())
+    }
+
+    fn tripwire_settings(creator: crate::tripwire::TripwireCreator) -> JobSettings {
+        JobSettings {
+            synthetic: Some(crate::synthetic::SyntheticOptions {
+                enabled: true,
+                tripwire: Some(crate::tripwire::TripwireOptions {
+                    enabled: true,
+                    email: "secret-alias@relay.example".into(),
+                    redirect_url: "https://archive.org/".into(),
+                }),
+                ..Default::default()
+            }),
+            tripwire_creator: Some(creator),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn run_job_tripwire_planted_verified_and_redacted() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else {
+            return;
+        };
+        let dir = tempdir("tripwire-ok");
+        let src = dir.join("photo.jpg");
+        fs::copy(fixture("dirty.jpg"), &src).unwrap();
+
+        let events = MockEvents::default();
+        let settings = tripwire_settings(stub_creator_ok);
+        let report = run_job(
+            &rt,
+            vec![item("t", src.clone())],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            Some(&srt),
+        );
+        let r = &report.results[0];
+
+        assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
+        assert_eq!(r.synthetic_state, SyntheticState::AppliedVerified);
+        assert_eq!(r.tripwire_state, TripwireState::PlantedVerified);
+        assert!(
+            r.detail
+                .contains("Investigation Tripwire planted and verified"),
+            "{}",
+            r.detail
+        );
+
+        // token URL is redacted everywhere it crosses out of the pipeline
+        let source_field = r
+            .synthetic_fields
+            .iter()
+            .find(|f| f.field == "XMP-dc:Source")
+            .expect("Source field");
+        assert!(
+            !source_field.value.contains("stubbedtoken"),
+            "full token URL must be redacted: {:?}",
+            source_field
+        );
+        assert!(source_field.value.starts_with('…'));
+        let result_json = serde_json::to_string(r).unwrap();
+        assert!(!result_json.contains("stubbedtoken"));
+        assert!(
+            !result_json.contains("secret-alias@relay.example"),
+            "email must never reach results"
+        );
+        for l in events.logs() {
+            assert!(
+                !l.contains("stubbedtoken"),
+                "full token URL must never be logged: {l}"
+            );
+            assert!(
+                !l.contains("secret-alias"),
+                "email must never be logged: {l}"
+            );
+        }
+
+        // the literal token URL IS in the committed output (planted, verified by engine)
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 1);
+        let readback = std::process::Command::new("exiftool")
+            .arg("-json")
+            .arg(&outputs[0])
+            .output();
+        if let Ok(rb) = readback {
+            let blob = String::from_utf8_lossy(&rb.stdout);
+            assert!(
+                blob.contains("stubbedtoken0000000000000"),
+                "token must be planted in output"
+            );
+            assert!(
+                !blob.contains("secret-alias@relay.example"),
+                "email must never be in the file"
+            );
+        }
+        // original untouched
+        assert!(src.exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_tripwire_creation_failure_keeps_synthetic_output() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else {
+            return;
+        };
+        let dir = tempdir("tripwire-fail");
+        let src = dir.join("photo.jpg");
+        fs::copy(fixture("dirty.jpg"), &src).unwrap();
+
+        let events = MockEvents::default();
+        let settings = tripwire_settings(stub_creator_fail);
+        let report = run_job(
+            &rt,
+            vec![item("t", src)],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            Some(&srt),
+        );
+        let r = &report.results[0];
+
+        assert_eq!(r.status, FileStatus::Warning, "{:?}", r);
+        assert_eq!(
+            r.synthetic_state,
+            SyntheticState::AppliedVerified,
+            "synthetic must survive canary failure"
+        );
+        assert_eq!(r.tripwire_state, TripwireState::FailedCreation);
+        assert!(r.detail.contains("File cleaning succeeded"), "{}", r.detail);
+        assert!(
+            r.detail.contains("Synthetic metadata was applied"),
+            "{}",
+            r.detail
+        );
+        assert!(
+            r.detail
+                .contains("Investigation Tripwire could not be created"),
+            "{}",
+            r.detail
+        );
+        assert!(r.committed, "clean+synthetic output must remain available");
+        let outputs = walkdir_flat(&dir.join(crate::output::OUTPUT_DIR_NAME));
+        assert_eq!(outputs.len(), 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_job_tripwire_unavailable_format_reports_explicitly() {
+        let Some(rt) = runtime_or_skip() else { return };
+        let Some(srt) = synth_runtime_or_skip(&rt) else {
+            return;
+        };
+        let dir = tempdir("tripwire-mp3");
+        let src = dir.join("track.mp3");
+        fs::copy(fixture("dirty.mp3"), &src).unwrap();
+
+        let events = MockEvents::default();
+        let settings = tripwire_settings(stub_creator_ok);
+        let report = run_job(
+            &rt,
+            vec![item("t", src)],
+            &settings,
+            &events,
+            &AtomicBool::new(false),
+            Some(&srt),
+        );
+        let r = &report.results[0];
+
+        assert_eq!(r.status, FileStatus::Processed, "{:?}", r);
+        assert_eq!(r.synthetic_state, SyntheticState::AppliedVerified);
+        assert_eq!(r.tripwire_state, TripwireState::UnavailableFormat);
+        assert!(
+            r.detail
+                .contains("Investigation Tripwire unavailable for this format"),
+            "{}",
+            r.detail
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 

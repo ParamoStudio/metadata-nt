@@ -4,13 +4,27 @@ use std::process::Command;
 const MAT2_URL: &str = "https://github.com/jvoisin/mat2";
 const DANGERZONE_URL: &str = "https://github.com/freedomofpress/dangerzone";
 const PRIVACYTOOLS_URL: &str = "https://www.privacytools.io/";
+const CANARYTOKENS_URL: &str = "https://canarytokens.org/";
+const CANARY_DOCS_URL: &str = "https://docs.canarytokens.org/guide/fast-redirect-token.html";
+const CANARY_REPO_URL: &str = "https://github.com/thinkst/canarytokens";
+const CANARY_AUDIT_URL: &str = "https://resources.canary.tools/documents/Doyensec_ThinkstCanaryTokensOSS_Report_Q22024_WithRetesting.pdf";
 
-/// SECURITY INVARIANT: the only three external destinations this application
+/// SECURITY INVARIANT: the only external destinations this application
 /// can ever open. They are compile-time constants; no command in this crate
 /// accepts a URL or a path from the frontend. Opened in the system browser
 /// via the platform opener binary with an argv vector — never a shell, never
 /// user input, no query parameters, no tracking data appended.
-const APPROVED_URLS: [&str; 3] = [MAT2_URL, DANGERZONE_URL, PRIVACYTOOLS_URL];
+/// The four Canarytokens destinations serve the Investigation Tripwire info
+/// dialog (owner-approved add-on spec §21).
+const APPROVED_URLS: [&str; 7] = [
+    MAT2_URL,
+    DANGERZONE_URL,
+    PRIVACYTOOLS_URL,
+    CANARYTOKENS_URL,
+    CANARY_DOCS_URL,
+    CANARY_REPO_URL,
+    CANARY_AUDIT_URL,
+];
 
 fn open_approved_url(url: &str) -> Result<(), String> {
     if !APPROVED_URLS.contains(&url) {
@@ -32,6 +46,22 @@ pub fn open_dangerzone_site() -> Result<(), String> {
 
 pub fn open_privacytools_site() -> Result<(), String> {
     open_approved_url(PRIVACYTOOLS_URL)
+}
+
+pub fn open_canarytokens_site() -> Result<(), String> {
+    open_approved_url(CANARYTOKENS_URL)
+}
+
+pub fn open_canary_docs() -> Result<(), String> {
+    open_approved_url(CANARY_DOCS_URL)
+}
+
+pub fn open_canary_repo() -> Result<(), String> {
+    open_approved_url(CANARY_REPO_URL)
+}
+
+pub fn open_canary_audit() -> Result<(), String> {
+    open_approved_url(CANARY_AUDIT_URL)
 }
 
 /// Compute the unique parent directories of committed outputs (order kept).
@@ -93,20 +123,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exactly_three_hardcoded_destinations() {
+    fn exactly_seven_hardcoded_destinations() {
         let source = include_str!("external.rs");
         let const_decls = source.matches("&str = \"https://").count();
         assert_eq!(
-            const_decls, 3,
-            "external.rs must declare exactly 3 URL constants"
+            const_decls, 7,
+            "external.rs must declare exactly 7 URL constants"
         );
-        assert_eq!(APPROVED_URLS.len(), 3);
+        assert_eq!(APPROVED_URLS.len(), 7);
         assert_eq!(MAT2_URL, "https://github.com/jvoisin/mat2");
         assert_eq!(
             DANGERZONE_URL,
             "https://github.com/freedomofpress/dangerzone"
         );
         assert_eq!(PRIVACYTOOLS_URL, "https://www.privacytools.io/");
+        assert_eq!(CANARYTOKENS_URL, "https://canarytokens.org/");
+        assert_eq!(
+            CANARY_DOCS_URL,
+            "https://docs.canarytokens.org/guide/fast-redirect-token.html"
+        );
+        assert_eq!(CANARY_REPO_URL, "https://github.com/thinkst/canarytokens");
+        assert_eq!(
+            CANARY_AUDIT_URL,
+            "https://resources.canary.tools/documents/Doyensec_ThinkstCanaryTokensOSS_Report_Q22024_WithRetesting.pdf"
+        );
     }
 
     #[test]

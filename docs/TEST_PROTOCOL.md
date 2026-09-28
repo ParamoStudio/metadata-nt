@@ -163,6 +163,33 @@ OFF by default on every launch (verify after restart).
 
 ---
 
+## Test I — Investigation Tripwire (live QA; sacrificial token — spec §23)
+
+Automated tests use stubs only; this is the ONE manual test that creates a
+real token. Use a dedicated test email alias and a harmless test file.
+
+1. Synthetic OFF → tripwire control not visible. Synthetic ON → "Plant
+   Investigation Tripwire" + (i) appear; OFF by default. ☐
+2. (i) → info modal (What/Privacy/alert-meaning/false-pos/false-neg + 4 links
+   open in system browser). ☐
+3. Check tripwire → panel (Alert email, Redirect default `https://archive.org/`,
+   privacy + alias-recommendation copy). "Enable Tripwire" without email →
+   error. With email → first-use disclosure (exact §5 copy) shown ONCE per
+   session; Cancel → not enabled; Continue → enabled. ☐
+4. Process `DSCN0010.jpg` (synthetic + tripwire) → result shows "Investigation
+   Tripwire ✓ Planted"; log shows token redacted (…last4 only). ☐
+5. Local verify: `exiftool -XMP-dc:Source -s3 "<output>"` == token URL literal;
+   grep output + app log for the alias email → ABSENT. ☐
+6. NO alert email arrives from processing alone (app never fires the token). ☐
+7. Manually open the planted Source URL in a browser → alert arrives at the
+   alias; visitor lands on the redirect destination. Record observed alert
+   fields. Retire the token. ☐
+8. Offline: disable network → process with tripwire → Warning "Investigation
+   Tripwire could not be created"; clean+synthetic output still committed. ☐
+9. Restart app → tripwire toggle OFF again (nothing persisted). ☐
+
+---
+
 ## Results log
 
 | Test | Date | Build | Result | Notes |
@@ -175,3 +202,4 @@ OFF by default on every launch (verify after restart).
 | F | — | — | pending | — |
 | G | — | — | pending | — |
 | H | — | — | pending | — |
+| I | — | — | pending | — |

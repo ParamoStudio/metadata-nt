@@ -14,6 +14,7 @@ mod model;
 mod output;
 mod selection;
 mod synthetic;
+mod tripwire;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -206,6 +207,26 @@ fn open_privacytools_site() -> Result<(), String> {
     external::open_privacytools_site()
 }
 
+#[tauri::command]
+fn open_canarytokens_site() -> Result<(), String> {
+    external::open_canarytokens_site()
+}
+
+#[tauri::command]
+fn open_canary_docs() -> Result<(), String> {
+    external::open_canary_docs()
+}
+
+#[tauri::command]
+fn open_canary_repo() -> Result<(), String> {
+    external::open_canary_repo()
+}
+
+#[tauri::command]
+fn open_canary_audit() -> Result<(), String> {
+    external::open_canary_audit()
+}
+
 /// Reveal the committed output directories of ONE known job. The frontend
 /// supplies only a job id; the paths revealed are exclusively those the job
 /// pipeline itself recorded — never frontend-provided paths.
@@ -309,7 +330,12 @@ fn start_clean_job(
     };
 
     if settings.inplace {
-        if settings.synthetic.map(|s| s.enabled).unwrap_or(false) {
+        if settings
+            .synthetic
+            .as_ref()
+            .map(|s| s.enabled)
+            .unwrap_or(false)
+        {
             return Err(
                 "synthetic metadata cannot be combined with destructive in-place mode (decoys are never written to originals)".into(),
             );
@@ -324,7 +350,12 @@ fn start_clean_job(
 
     let rt = Mat2Runtime::resolve_with_hint(resource_hint(&app).as_deref())?;
 
-    let synth_rt = if settings.synthetic.map(|s| s.enabled).unwrap_or(false) {
+    let synth_rt = if settings
+        .synthetic
+        .as_ref()
+        .map(|s| s.enabled)
+        .unwrap_or(false)
+    {
         let srt = synthetic::SyntheticRuntime::resolve(&rt, resource_hint(&app).as_deref())?;
         let sha = srt.pack_sha256()?;
         if sha != synthetic::EXPECTED_PACK_SHA256 {
@@ -341,6 +372,15 @@ fn start_clean_job(
     } else {
         None
     };
+
+    if let Some(s) = &settings.synthetic
+        && s.enabled
+        && let Some(tw) = s.tripwire.as_ref().filter(|t| t.enabled)
+    {
+        tripwire::validate_email(&tw.email).map_err(|e| format!("Investigation Tripwire: {e}"))?;
+        tripwire::validate_redirect_url(&tw.redirect_url)
+            .map_err(|e| format!("Investigation Tripwire: {e}"))?;
+    }
 
     for item in &items {
         state.registry.set_status(&item.id, FileStatus::Queued);
@@ -364,6 +404,7 @@ fn start_clean_job(
         custom_output_root,
         inplace: settings.inplace,
         synthetic: settings.synthetic,
+        tripwire_creator: None,
     };
     let events = Arc::new(TauriJobEvents {
         app: app.clone(),
@@ -534,6 +575,10 @@ pub fn run() {
             open_mat2_site,
             open_dangerzone_site,
             open_privacytools_site,
+            open_canarytokens_site,
+            open_canary_docs,
+            open_canary_repo,
+            open_canary_audit,
             reveal_output,
             runtime_diagnostics,
             synthetic_preview,

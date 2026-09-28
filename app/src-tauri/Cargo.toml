@@ -23,6 +23,7 @@ tauri-plugin-dialog = "2"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 time = { version = "0.3", features = ["local-offset", "formatting", "macros"] }
+ureq = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

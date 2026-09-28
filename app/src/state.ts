@@ -83,6 +83,22 @@ export function openPrivacytoolsSite(): Promise<void> {
   return invoke("open_privacytools_site");
 }
 
+export function openCanarytokensSite(): Promise<void> {
+  return invoke("open_canarytokens_site");
+}
+
+export function openCanaryDocs(): Promise<void> {
+  return invoke("open_canary_docs");
+}
+
+export function openCanaryRepo(): Promise<void> {
+  return invoke("open_canary_repo");
+}
+
+export function openCanaryAudit(): Promise<void> {
+  return invoke("open_canary_audit");
+}
+
 export function revealOutput(jobId: string): Promise<number> {
   return invoke<number>("reveal_output", { jobId });
 }

@@ -16,6 +16,7 @@ import type {
   JobSettingsDto,
   PublicSelectedFile,
   SyntheticOptions,
+  TripwireOptions,
 } from "./types";
 
 interface UiState {
@@ -49,6 +50,13 @@ const state: UiState = {
 };
 
 const MAX_LOG_LINES = 500;
+
+// Session-only tripwire flags (spec §5: no persistent acknowledgement; both
+// reset on every launch because nothing is stored).
+let tripwireDisclosedThisSession = false;
+let tripwireConfirmed = false;
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 let confirmResolver: ((value: boolean) => void) | null = null;
 
@@ -251,6 +259,8 @@ function setJobRunning(running: boolean): void {
     "btn-inspect-only",
     "btn-choose-output",
     "btn-synth-preview",
+    "btn-tripwire-enable",
+    "btn-tripwire-cancel",
     "diag-version",
     "diag-formats",
     "diag-deps",
@@ -487,6 +497,20 @@ function renderDiff(result: FileJobResult): void {
     case "not_requested":
       break;
   }
+  switch (result.tripwire_state) {
+    case "planted_verified":
+      lines.push("Investigation Tripwire ✓ Planted");
+      break;
+    case "failed_creation":
+    case "failed_kept_synthetic":
+      lines.push("Investigation Tripwire ! Could not be created");
+      break;
+    case "unavailable_format":
+      lines.push("Investigation Tripwire unavailable for this format");
+      break;
+    case "not_requested":
+      break;
+  }
   summary.textContent = lines.join("\n");
   if (result.summary?.still_detectable === 0 || result.synthetic_state === "applied_verified") {
     mustEl("epistemic-note").classList.remove("hidden");
@@ -651,6 +675,31 @@ function readSyntheticOptions(): SyntheticOptions | null {
   if (location !== "off" && location !== "city" && location !== "gps") return null;
   if (technical !== "synthetic" && technical !== "empty") return null;
   if (serial !== "empty" && serial !== "generate") return null;
+
+  let tripwire: TripwireOptions | null = null;
+  if (enabled && inputEl("opt-tripwire")?.checked === true) {
+    if (!tripwireConfirmed) {
+      showInspectionMessage(
+        "error",
+        "Confirm the Investigation Tripwire panel (Enable Tripwire) before processing.",
+      );
+      return null;
+    }
+    const emailEl = inputEl("tripwire-email") as HTMLInputElement | null;
+    const redirectEl = inputEl("tripwire-redirect") as HTMLInputElement | null;
+    const email = (emailEl?.value ?? "").trim();
+    const redirectUrl = (redirectEl?.value ?? "").trim() || "https://archive.org/";
+    if (!EMAIL_SHAPE.test(email) || email.length > 254) {
+      showInspectionMessage("error", "Investigation Tripwire requires a valid alert email.");
+      return null;
+    }
+    if (!redirectUrl.startsWith("https://")) {
+      showInspectionMessage("error", "Redirect destination must be an https:// URL.");
+      return null;
+    }
+    tripwire = { enabled: true, email, redirectUrl };
+  }
+
   return {
     enabled,
     profileScope: scope,
@@ -658,6 +707,7 @@ function readSyntheticOptions(): SyntheticOptions | null {
     locationMode: location,
     technicalMode: technical,
     serialMode: serial,
+    tripwire,
   };
 }
 
@@ -908,8 +958,11 @@ function boot(): void {
     if (e.target === mustEl("confirm-overlay")) closeConfirm(false);
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !mustEl("confirm-overlay").classList.contains("hidden")) {
-      closeConfirm(false);
+    if (e.key === "Escape") {
+      if (!mustEl("confirm-overlay").classList.contains("hidden")) {
+        closeConfirm(false);
+      }
+      mustEl("tripwire-info-overlay").classList.add("hidden");
     }
   });
 
@@ -925,9 +978,70 @@ function boot(): void {
       );
       return;
     }
+    if (!synthBox.checked) {
+      const tw = inputEl("opt-tripwire");
+      if (tw) tw.checked = false;
+      tripwireConfirmed = false;
+      mustEl("tripwire-panel").classList.add("hidden");
+    }
     if (inplaceBox) inplaceBox.disabled = synthBox.checked;
     logInfo(synthBox.checked ? "Synthetic metadata mode enabled (decoys, cleaned copies only)." : "Synthetic metadata mode disabled.");
   });
+
+  const tripwireBox = inputEl("opt-tripwire");
+  tripwireBox?.addEventListener("change", () => {
+    mustEl("tripwire-panel").classList.toggle("hidden", !tripwireBox.checked);
+    if (!tripwireBox.checked) tripwireConfirmed = false;
+  });
+  bind("btn-tripwire-cancel", () => {
+    if (tripwireBox) tripwireBox.checked = false;
+    tripwireConfirmed = false;
+    mustEl("tripwire-panel").classList.add("hidden");
+  });
+  bind("btn-tripwire-enable", () => {
+    const emailEl = inputEl("tripwire-email") as HTMLInputElement | null;
+    const redirectEl = inputEl("tripwire-redirect") as HTMLInputElement | null;
+    const email = (emailEl?.value ?? "").trim();
+    const redirect = (redirectEl?.value ?? "").trim() || "https://archive.org/";
+    if (!EMAIL_SHAPE.test(email) || email.length > 254) {
+      showInspectionMessage("error", "Enter a valid alert email to enable the tripwire.");
+      return;
+    }
+    if (!redirect.startsWith("https://")) {
+      showInspectionMessage("error", "Redirect destination must be an https:// URL.");
+      return;
+    }
+    const finish = () => {
+      tripwireConfirmed = true;
+      logInfo("Investigation Tripwire enabled (one token per output file; alerts go to the service, never into files).");
+    };
+    if (!tripwireDisclosedThisSession) {
+      void confirmDialog(
+        "Detection Canary uses Canarytokens.org",
+        "To create the tripwire, this application will contact Canarytokens.org and send:\n\n• the alert email you provide\n• a random non-sensitive reference\n• the redirect destination\n\nYour file, filename, original metadata and file path are never sent.\n\nLike any direct web connection, Canarytokens.org can observe the network connection used to create the token.",
+        "Continue",
+      ).then((ok) => {
+        if (ok) {
+          tripwireDisclosedThisSession = true;
+          finish();
+        }
+      });
+    } else {
+      finish();
+    }
+  });
+  bind("btn-tripwire-info", () => mustEl("tripwire-info-overlay").classList.remove("hidden"));
+  bind("tw-info-close", () => mustEl("tripwire-info-overlay").classList.add("hidden"));
+  mustEl("tripwire-info-overlay").addEventListener("click", (e) => {
+    if (e.target === mustEl("tripwire-info-overlay")) {
+      mustEl("tripwire-info-overlay").classList.add("hidden");
+    }
+  });
+  bind("link-canarytokens", () => ipc.openCanarytokensSite().catch((e) => logError("open Canarytokens", e)));
+  bind("link-canary-docs", () => ipc.openCanaryDocs().catch((e) => logError("open Fast Redirect docs", e)));
+  bind("link-canary-repo", () => ipc.openCanaryRepo().catch((e) => logError("open canarytokens repo", e)));
+  bind("link-canary-audit", () => ipc.openCanaryAudit().catch((e) => logError("open security audit", e)));
+
   for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="synth-location"]')) {
     radio.addEventListener("change", () => {
       const gps = document.querySelector<HTMLInputElement>('input[name="synth-location"]:checked')?.value === "gps";

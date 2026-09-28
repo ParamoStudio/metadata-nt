@@ -25,7 +25,10 @@ Nothing else is granted. In particular:
 - **No generic opener** — the three external links become dedicated Rust
   commands with hard-coded URL constants (Task 14); `open_url(url)` /
   `open_path(path)` never exist.
-- **No HTTP plugin, no updater, no telemetry** — offline by design.
+- **No HTTP plugin, no updater, no telemetry.** Cleaning, inspection and
+  synthetic metadata processing are fully local. The only intentional network
+  path is the optional Investigation Tripwire (below) — a Rust-side client
+  hard-coded to the Canarytokens.org origin, activated explicitly by the user.
 - `tauri-plugin-log` (present in the scaffold template) was **removed** in
   Task 2: logs are in-memory only (HANDOFF §18); no persistent log files that
   could retain sensitive filenames.
@@ -39,6 +42,7 @@ Nothing else is granted. In particular:
 | `time` (0.3, local-offset/formatting/macros) | `YYYY-MM-DD_HHmmss` output-directory timestamps in local time; pure-Rust, no network/parser surface, replaces hand-rolled civil-calendar code | None |
 | `sha2` (0.10) | SHA-256 checksums proving "source unchanged" and "staging byte-identical" invariants (Task 8 tests + QA protocol); RustCrypto, pure Rust, no network | None |
 | `libc` (0.2, unix only) | Process-group signalling (`kill(-pgid, SIGTERM/SIGKILL)`) for controlled cancellation of MAT2 children, which internally spawn ProcessPoolExecutor workers; already an indirect dependency of the Rust std/tauri tree — no new supply chain | None |
+| `ureq` (2.x, rustls) | Investigation Tripwire: create a Fast Redirect canary at the hard-coded Canarytokens.org origin (spec §16–17: HTTPS-only, normal cert validation, 12s timeout, 64KB response bound, 0 redirects, no cookies, POST-only, no retry loop). std has no HTTP/TLS; ureq is the minimal maintained blocking client (no async runtime). Pulls rustls/webpki (allow-listed by cargo-deny) | None — Rust-side only; no HTTP IPC command exists; WebView keeps zero network capability |
 
 Registry policy (selection.rs, covered by unit tests): frontend-supplied data is
 only ever opaque IDs; unknown IDs resolve to nothing; duplicates dedupe by
@@ -73,6 +77,32 @@ New commands (allow-list updated, 21 total): `synthetic_preview` (ephemeral
 seed, display data only, extension validated `[a-z0-9]{1..8}`),
 `synthetic_pack_info` (diagnostics). No new Tauri permissions; capability set
 unchanged (`core:event:default` only).
+
+### Investigation Tripwire (owner-approved; the ONLY intentional network path)
+
+Sub-feature of Synthetic Metadata (hidden/disabled when synthetic is OFF;
+can never run in in-place mode). Mints a Canarytokens.org **Fast Redirect**
+token per output file and plants it as `XMP-dc:Source` on the already
+synthetic-verified staged file.
+
+| Property | Enforcement | Verified by |
+|---|---|---|
+| Hard-coded destination | `CANARY_ORIGIN`/`CREATE_PATH` constants in `tripwire.rs`; no URL parameter exists anywhere in the API; contract verified against thinkst/canarytokens @ c1a3e87 + live production | `origin_and_endpoint_are_hardcoded` |
+| Request minimization | exactly 4 form fields: `token_type=fast_redirect`, `email`, `memo`, `redirect_url` — no filename/path/bytes/metadata/profile/hostname/username possible | `request_is_minimal_four_fields_only` |
+| Alert-email containment | email goes ONLY to the service (server-side notification config); never in file metadata, token URL, memo, logs, results or IPC; `Debug` impls redact it | `alert_email_in_request_but_redacted_everywhere_else`, engine email-absence test, pipeline email-privacy assertions |
+| Token URL never fetched | module has zero GET/HEAD call sites (static test); engine has zero network imports (AST test); verification is literal string comparison only; CI/QA never uses live tokens | `module_exposes_no_get_or_head_path`, `test_tripwire_url_is_never_fetched_during_write_or_verify` (mandatory spec §18 name) |
+| Redirection | full URL redacted to `…last4` before IPC/logs/results | `token_url_redaction_keeps_only_last_four`, `run_job_tripwire_planted_verified_and_redacted` |
+| Neutral memo | `metadata'nt reference <8 CSPRNG chars>`; no derivation from file/machine/user; never stable | `memo_is_neutral_random_and_wellformed` |
+| Redirect destination | `https://` only; `file:`/`javascript:`/`data:`/custom schemes rejected; printable-ASCII bound; never fetched/resolved; default `https://archive.org/` | `redirect_validation` |
+| One token per file, sequential | created inside the sequential per-file pipeline; no concurrency | pipeline structure + `run_job_tripwire_*` tests |
+| Failure isolation (§20) | creation failure → synthetic still applied, Warning, "Clean output is available"; plant/verify failure → `.pre-tripwire` snapshot atomically restored (synthetic survives); offline → graceful Transport error | `run_job_tripwire_creation_failure_keeps_synthetic_output`, engine `failed_kept_synthetic` test, packaging battery (unroutable 127.0.0.1:9 URL) |
+| Explicit activation | OFF by default every launch; requires Synthetic ON; first-use network disclosure per session (session-only, never persisted); Enable-Tripwire confirmation gates job submission | frontend session flags (nothing stored) + QA Test I |
+| WebView unchanged | networking is Rust-only; CSP/capabilities untouched (no `connect-src` additions, no HTTP IPC command) | lint gates + capability ledger above |
+
+Commands added (allow-list 25 total): `open_canarytokens_site`,
+`open_canary_docs`, `open_canary_repo`, `open_canary_audit` — same hard-coded
+constant mechanism as the original three (now 7 approved URLs; the
+exactly-seven test guards the set).
 
 ### Task 14 decision: external links & Reveal without the opener plugin
 

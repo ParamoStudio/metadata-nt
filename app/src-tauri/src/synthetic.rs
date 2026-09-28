@@ -59,7 +59,7 @@ pub enum SerialMode {
     Generate,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SyntheticOptions {
     pub enabled: bool,
@@ -68,6 +68,8 @@ pub struct SyntheticOptions {
     pub location_mode: LocationMode,
     pub technical_mode: TechnicalMode,
     pub serial_mode: SerialMode,
+    #[serde(default)]
+    pub tripwire: Option<crate::tripwire::TripwireOptions>,
 }
 
 impl Default for SyntheticOptions {
@@ -79,12 +81,13 @@ impl Default for SyntheticOptions {
             location_mode: LocationMode::Off,
             technical_mode: TechnicalMode::Synthetic,
             serial_mode: SerialMode::Empty,
+            tripwire: None,
         }
     }
 }
 
 impl SyntheticOptions {
-    pub fn to_engine_json(self) -> serde_json::Value {
+    pub fn to_engine_json(&self) -> serde_json::Value {
         let scope = match self.profile_scope {
             ProfileScope::PerFile => "per_file",
             ProfileScope::Batch => "batch",
@@ -261,6 +264,9 @@ impl SyntheticRuntime {
         }))
     }
 
+    // 8 typed parameters mirror the engine apply protocol exactly; bundling
+    // them into a struct would only relocate the contract.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply(
         &self,
         options: &SyntheticOptions,
@@ -269,8 +275,9 @@ impl SyntheticRuntime {
         staged_cleaned: &Path,
         ext: &str,
         original_values: &[String],
+        tripwire_source_url: Option<&str>,
     ) -> Result<ApplyResponse, String> {
-        let resp = self.request(serde_json::json!({
+        let mut req = serde_json::json!({
             "action": "apply",
             "pack_path": self.pack_path,
             "options": options.to_engine_json(),
@@ -281,7 +288,11 @@ impl SyntheticRuntime {
                 "ext": ext,
                 "original_values": original_values,
             },
-        }))?;
+        });
+        if let Some(url) = tripwire_source_url {
+            req["tripwire"] = serde_json::json!({ "source_url": url });
+        }
+        let resp = self.request(req)?;
         serde_json::from_value(resp).map_err(|e| format!("bad engine response: {e}"))
     }
 }
@@ -304,6 +315,10 @@ pub struct ApplyResponse {
     pub error: Option<String>,
     #[serde(default)]
     pub verification: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tripwire_state: Option<String>,
+    #[serde(default)]
+    pub tripwire_error: Option<String>,
 }
 
 /// Format-constant keys whose values are structural, not identifying.

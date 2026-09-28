@@ -25,6 +25,10 @@ ALLOWED=(
   open_mat2_site
   open_dangerzone_site
   open_privacytools_site
+  open_canarytokens_site
+  open_canary_docs
+  open_canary_repo
+  open_canary_audit
   reveal_output
   runtime_diagnostics
   synthetic_preview

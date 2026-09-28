@@ -203,6 +203,23 @@ echo "PASS synthetic apply+verify roundtrip (frozen, bundled exiftool)"
 echo "$SYNTH_APPLY" | grep -qi "created with gimp" \
   && { echo "FAIL: original value present in synthetic response"; FAILURES=$((FAILURES+1)); } || true
 
+# Investigation Tripwire: plant+verify with an UNROUTABLE fake URL (127.0.0.1:9).
+# The engine writes and literal-compares the URL only — it is never fetched
+# (spec §18); this check is fully offline.
+TRIP_REQ="$(cat <<JSON
+{"action":"apply",
+ "options":{"profile_scope":"per_file","identity_mode":"alias","location_mode":"off","technical_mode":"synthetic","serial_mode":"empty"},
+ "job_seed":"battery-tripwire-seed-0123456789abcdef",
+ "selection_id":"battery-trip",
+ "tripwire":{"source_url":"http://127.0.0.1:9/about/batterytokentest000000000/payments.js"},
+ "file":{"path":"${SMOKE_DIR}/dirty.cleaned.png","ext":"png","original_values":[]}}
+JSON
+)"
+TRIP_APPLY="$(printf '%s' "$TRIP_REQ" | "${CLEAN_ENV[@]}" "$RT" synthetic 2>/dev/null)"
+echo "$TRIP_APPLY" | grep -q '"tripwire_state": "planted_verified"' \
+  || { echo "FAIL: frozen tripwire plant: $TRIP_APPLY"; FAILURES=$((FAILURES+1)); }
+echo "PASS tripwire plant+verify (frozen, literal-only, never fetched)"
+
 [ "$FAILURES" -eq 0 ] || { echo "FAIL: ${FAILURES} smoke failures"; exit 1; }
 cd "$REPO_ROOT"
 

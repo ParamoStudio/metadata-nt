@@ -59,7 +59,9 @@ The five release-critical failure classes (IMPLEMENTATION_PLAN "Review focus"):
    strict CSP (no inline script, no remote sources, frame/object 'none');
    three hard-coded link openers implemented as dedicated Rust commands
    (Task 3, 12, 14, 22).
-5. **Accidental network / supply-chain behavior** — app is offline by design.
+5. **Accidental network / supply-chain behavior** — app is offline by design
+   (single intentional exception: the owner-approved Investigation Tripwire,
+   §7 — backend-only, hard-coded origin, explicit activation).
    Mitigations: no fetch/XHR/WebSocket in app source (enforced by
    `scripts/check-no-remote-refs.sh`); no telemetry/updater/remote assets;
    pinned upstream snapshot with GPG-verified tag + `verify-upstream.sh`;
@@ -91,6 +93,10 @@ Never described as "anonymous", "untraceable", "100% clean" or "state-actor
 proof". The epistemic limit of `--show` is preserved in UI copy. Synthetic-mode
 copy is likewise constrained: "Original identifying metadata removed /
 Synthetic metadata added and verified" — never "forensically indistinguishable".
+The tripwire is an investigative signal, never an attribution system: alerts
+prove a URL was requested, not by whom (VPN/proxy/Tor/scanner intermediaries
+are possible), and absence of alerts proves nothing (false negatives are
+documented in the UI).
 
 ## 6. Synthetic metadata add-on (owner-approved scope extension)
 
@@ -117,3 +123,21 @@ their constraints (full enforcement matrix in `docs/SECURITY.md`):
   values and file content; the UI labels synthetic values explicitly and the
   GPS opt-in carries a falsity warning. This does not weaken the clean-only
   workflow, which remains the default.
+
+## 7. Investigation Tripwire — intentional network exception (owner-approved)
+
+The only network path in the product. Backend Rust only (`tripwire.rs`, ureq +
+rustls): POST to the hard-coded Canarytokens.org generate endpoint with exactly
+four fields (token_type, alert email, neutral random memo, redirect
+destination). Never sends file bytes, filenames, paths, original metadata,
+synthetic profiles, hostname or account name. The returned token URL is planted
+as `XMP-dc:Source` on the synthetic-verified staged file and verified by literal
+comparison — the app NEVER requests it (static no-GET/HEAD test + engine
+no-network AST test). The alert email exists only as server-side notification
+configuration: never written to files, logs, results or IPC (Debug impls
+redact). Failures are isolated: canary creation/plant failure never destroys
+the clean or synthetic output (§20 fallbacks). Off by default, requires
+Synthetic ON, first-use disclosure per session (session-only). Residual risks
+accepted by owner: Canarytokens.org observes the creation connection and holds
+the alert email; alert IPs are not identity proof (false positives from
+scanners/gateways); no alert is not proof of no inspection (false negatives).

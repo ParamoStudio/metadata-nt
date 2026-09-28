@@ -138,6 +138,37 @@
                       <label><input type="radio" name="synth-serial" value="empty" checked /> Leave empty</label>
                       <label><input type="radio" name="synth-serial" value="generate" /> Generate synthetic identifiers [expert]</label>
                     </fieldset>
+                    <div id="tripwire-block">
+                      <span id="tripwire-label-row">
+                        <label for="opt-tripwire">Plant Investigation Tripwire</label>
+                        <button id="btn-tripwire-info" type="button" aria-label="About Investigation Tripwire" title="About Investigation Tripwire">(i)</button>
+                      </span>
+                      <input type="checkbox" id="opt-tripwire" />
+                      <div id="tripwire-panel" class="hidden">
+                        <h4>Investigation Tripwire</h4>
+                        <label for="tripwire-email">Alert email</label>
+                        <input type="text" id="tripwire-email" placeholder="alias@relay.example" autocomplete="off" spellcheck="false" />
+                        <label for="tripwire-redirect">Redirect destination</label>
+                        <input type="text" id="tripwire-redirect" value="https://archive.org/" autocomplete="off" spellcheck="false" />
+                        <p class="helper">
+                          Canarytokens.org will alert this address if somebody
+                          follows the planted Source reference.
+                        </p>
+                        <p class="helper">
+                          The alert email is sent to Canarytokens.org for notification
+                          purposes. It is not written into the processed file or
+                          exposed through the planted metadata URL.
+                        </p>
+                        <p class="helper warning">
+                          Recommended: use a dedicated email alias or relay
+                          rather than your primary email address.
+                        </p>
+                        <div id="tripwire-panel-buttons">
+                          <button id="btn-tripwire-cancel" type="button">Cancel</button>
+                          <button id="btn-tripwire-enable" type="button">Enable Tripwire</button>
+                        </div>
+                      </div>
+                    </div>
                     <div id="synthetic-preview-row">
                       <button id="btn-synth-preview" type="button">Preview synthetic profile</button>
                       <span id="synthetic-preview-ext" class="helper"></span>
@@ -227,6 +258,35 @@
           <div id="confirm-buttons">
             <button id="confirm-cancel" type="button">Cancel</button>
             <button id="confirm-ok" type="button" class="destructive">Confirm</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="tripwire-info-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="tw-info-title">
+        <div id="confirm-box">
+          <h3 id="tw-info-title">Investigation Tripwire</h3>
+          <div id="tw-info-body">
+            <h4>What is this?</h4>
+            <p>Plants a plausible Source reference inside the synthetic metadata. Reading the metadata does not trigger it. Following the reference does.</p>
+            <h4>What happens?</h4>
+            <p>Canarytokens.org sends an alert to the email you provide and redirects the visitor to the destination you selected.</p>
+            <h4>Privacy</h4>
+            <p>Your alert email is provided to Canarytokens.org so it can send notifications. It is not written into the file or exposed through the planted Source URL. For sensitive use, use a dedicated email alias or relay.</p>
+            <h4>What can an alert tell me?</h4>
+            <p>It means the planted URL was requested. Canarytokens may include network or request information such as the source IP observed by the service. That IP is not proof of a person's identity and may belong to a VPN, proxy, Tor exit, security scanner, gateway or other intermediary.</p>
+            <h4>False positives</h4>
+            <p>Link scanners, security gateways and automated analysis systems can sometimes follow URLs. A trigger does not prove who requested it.</p>
+            <h4>False negatives</h4>
+            <p>No alert does not prove that nobody inspected the file. Someone can read the metadata without following the link, work offline, block network requests or recognize the Canary infrastructure.</p>
+          </div>
+          <div id="tw-info-links">
+            <button id="link-canarytokens" type="button">Canarytokens.org</button>
+            <button id="link-canary-docs" type="button">Fast Redirect docs</button>
+            <button id="link-canary-repo" type="button">Open-source project</button>
+            <button id="link-canary-audit" type="button">Independent security audit</button>
+          </div>
+          <div id="confirm-buttons">
+            <button id="tw-info-close" type="button">Close</button>
           </div>
         </div>
       </div>

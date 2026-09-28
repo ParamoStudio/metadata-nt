@@ -156,6 +156,33 @@ class ExifToolWriter:
         except (ValueError, IndexError):
             raise WriteError('exiftool read-back produced invalid JSON')
 
+    # --- Investigation Tripwire support (XMP-dc:Source) ---
+    # Supported only where the recipe already demonstrates XMP writing
+    # (spec §10: no forced universal support).
+
+    def supports_source(self, recipe):
+        return any(f.startswith('XMP-') for f in recipe.get('candidate_fields', []))
+
+    def write_source(self, target, source_url):
+        _check_target(target)
+        proc = _run([_exiftool(), '-overwrite_original', '-charset', 'filename=utf8',
+                     '-XMP-dc:Source=%s' % source_url, '--', target])
+        if proc.returncode != 0:
+            raise WriteError('exiftool Source write failed (exit %d): %s' %
+                             (proc.returncode, (proc.stderr or proc.stdout).strip()[:300]))
+        out = (proc.stdout or '') + (proc.stderr or '')
+        errors = [l.strip() for l in out.splitlines() if re.search(r'\bError\b', l)]
+        if errors:
+            raise WriteError('exiftool reported: %s' % errors[0][:300])
+        return [{'field': 'XMP-dc:Source', 'value': source_url}]
+
+    def read_source(self, target):
+        data = self.read_back(target)
+        for key, value in data.items():
+            if key == 'XMP-dc:Source' or key.rsplit(':', 1)[-1] == 'Source':
+                return str(value)
+        return None
+
 
 class MutagenWriter:
     """Tier-2 audio writer: MP3 (ID3 TENC/TSSE/TDRC/TDTG), FLAC/OGG
@@ -167,6 +194,9 @@ class MutagenWriter:
 
     def handles(self, recipe):
         return str(recipe.get('writer', '')).startswith('mutagen')
+
+    def supports_source(self, recipe):
+        return False
 
     def write(self, profile, recipe, target):
         _check_target(target)
@@ -273,6 +303,9 @@ class OoxmlCorePropertiesWriter:
 
     def handles(self, recipe):
         return recipe.get('writer') == 'safe_ooxml_core_properties_adapter'
+
+    def supports_source(self, recipe):
+        return False
 
     @staticmethod
     def _safe_member(name):

@@ -708,3 +708,127 @@ td.synth-value {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* ---------- Investigation Tripwire ---------- */
+
+#tripwire-block {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  padding: 8px 10px;
+  margin: 4px 0;
+}
+
+#tripwire-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#tripwire-label-row label {
+  margin: 0;
+  flex: 1;
+}
+
+#btn-tripwire-info {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+#tripwire-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#tripwire-panel h4 {
+  margin: 0 0 4px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+#tripwire-panel label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 2px 0 0 0;
+}
+
+#tripwire-panel input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  user-select: text;
+}
+
+#tripwire-panel input[type="text"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+#tripwire-panel .helper {
+  margin: 4px 0 0 0;
+}
+
+#tripwire-panel-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+#tripwire-info-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+#tw-info-body {
+  max-height: 46vh;
+  overflow-y: auto;
+  user-select: text;
+}
+
+#tw-info-body h4 {
+  margin: 10px 0 2px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+#tw-info-body p {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+#tw-info-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 12px 0;
+}
+
+#tw-info-links button {
+  font-size: 11px;
+  padding: 3px 8px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

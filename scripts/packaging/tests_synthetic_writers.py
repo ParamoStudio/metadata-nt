@@ -382,5 +382,115 @@ class TestDocxWriter(Base):
             w.write(profile, recipe, path)
 
 
+class TestTripwire(Base):
+    FAKE_TOKEN_URL = 'http://canarytokens.com/about/unroutabletesttoken0000000000/payments.js'
+
+    def apply_tw(self, path, ext=None, seed=SEED, sel='tw-1', originals=(), source_url=None):
+        req = {
+            'action': 'apply', 'pack_path': PACK_PATH, 'options': OPTIONS,
+            'job_seed': seed, 'selection_id': sel,
+            'file': {'path': path, 'ext': ext or os.path.splitext(path)[1].lstrip('.'),
+                     'original_values': list(originals)},
+        }
+        if source_url is not None:
+            req['tripwire'] = {'source_url': source_url}
+        return handle_request(req)
+
+    def test_tripwire_url_is_never_fetched_during_write_or_verify(self):
+        """Spec §18 mandatory regression: the engine has NO network capability.
+        Scans every engine module's AST for forbidden network imports/calls —
+        the token URL can only ever be written and compared as a literal."""
+        import ast
+        forbidden_modules = {
+            'urllib', 'urllib.request', 'urllib2', 'http', 'http.client',
+            'requests', 'socket', 'ftplib', 'smtplib', 'telnetlib', 'xmlrpc',
+            'webbrowser', 'aiohttp', 'httpx',
+        }
+        engine_dir = os.path.join(HERE, 'synthetic_engine')
+        scanned = 0
+        for fname in sorted(os.listdir(engine_dir)):
+            if not fname.endswith('.py'):
+                continue
+            with open(os.path.join(engine_dir, fname)) as f:
+                tree = ast.parse(f.read(), filename=fname)
+            scanned += 1
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        root = alias.name.split('.')[0]
+                        self.assertNotIn(alias.name, forbidden_modules,
+                                         '%s imports %s' % (fname, alias.name))
+                        self.assertNotIn(root, {m.split('.')[0] for m in forbidden_modules},
+                                         '%s imports network module %s' % (fname, alias.name))
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    root = node.module.split('.')[0]
+                    self.assertNotIn(node.module, forbidden_modules,
+                                     '%s imports %s' % (fname, node.module))
+                    self.assertNotIn(root, {m.split('.')[0] for m in forbidden_modules},
+                                     '%s imports network module %s' % (fname, node.module))
+        self.assertGreaterEqual(scanned, 5, 'expected to scan all engine modules')
+
+    @unittest.skipUnless(have('exiftool'), 'exiftool unavailable')
+    def test_tripwire_planted_and_verified_on_jpeg(self):
+        cleaned = self.cleaned('dirty.jpg', as_name='tw-plant.jpg')
+        r = self.apply_tw(cleaned, sel='tw-plant', source_url=self.FAKE_TOKEN_URL,
+                          originals=removed_values(os.path.join(FIXTURES, 'dirty.jpg'), cleaned))
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(r['synthetic_state'], 'applied_verified')
+        self.assertEqual(r['tripwire_state'], 'planted_verified')
+        self.assertTrue(any(w['field'] == 'XMP-dc:Source' and w['value'] == self.FAKE_TOKEN_URL
+                            for w in r['written']))
+        out = subprocess.run(['exiftool', '-json', '-G1', '--', cleaned],
+                             capture_output=True, text=True).stdout
+        data = json.loads(out)[0]
+        sources = [v for k, v in data.items() if k.endswith('Source')]
+        self.assertIn(self.FAKE_TOKEN_URL, sources, 'literal token URL must be readable back')
+        self.assertNotIn('relay.example', out)
+        self.assertNotIn('secret', out.lower().replace('secrets', ''))
+
+    @unittest.skipUnless(have('exiftool'), 'exiftool unavailable')
+    def test_tripwire_email_never_reaches_engine_or_file(self):
+        import re as _re
+        cleaned = self.cleaned('dirty.png', as_name='tw-email.png')
+        r = self.apply_tw(cleaned, sel='tw-email', source_url=self.FAKE_TOKEN_URL)
+        self.assertTrue(r['ok'], r)
+        out = subprocess.run(['exiftool', '-json', '--', cleaned], capture_output=True, text=True).stdout
+        emails = _re.findall(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}', out)
+        self.assertEqual(emails, [], 'no email-shaped data may appear in the output')
+
+    def test_tripwire_unavailable_for_audio_keeps_synthetic(self):
+        cleaned = self.cleaned('dirty.mp3', as_name='tw-audio.mp3')
+        r = self.apply_tw(cleaned, sel='tw-audio', source_url=self.FAKE_TOKEN_URL,
+                          originals=removed_values(os.path.join(FIXTURES, 'dirty.mp3'), cleaned))
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(r['synthetic_state'], 'applied_verified')
+        self.assertEqual(r['tripwire_state'], 'unavailable_format')
+
+    @unittest.skipUnless(have('exiftool'), 'exiftool unavailable')
+    def test_tripwire_invalid_url_keeps_synthetic(self):
+        cleaned = self.cleaned('dirty.jpg', as_name='tw-badurl.jpg')
+        r = self.apply_tw(cleaned, sel='tw-badurl', source_url='http://x/\x07evil',
+                          originals=removed_values(os.path.join(FIXTURES, 'dirty.jpg'), cleaned))
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(r['synthetic_state'], 'applied_verified')
+        self.assertEqual(r['tripwire_state'], 'failed_kept_synthetic')
+        out = subprocess.run(['exiftool', '-json', '-G1', '--', cleaned],
+                             capture_output=True, text=True).stdout
+        data = json.loads(out)[0]
+        self.assertFalse([k for k in data if k.rsplit(':', 1)[-1] == 'Source'],
+                         'no Source tag may be written for an invalid URL')
+
+    def test_source_field_never_generated_by_profiles(self):
+        from synthetic_engine.engine import flatten_profile_fields, generate_profile
+        pack, _ = pack_loader.load_and_validate(PACK_PATH)
+        for ext in ('jpg', 'png', 'pdf', 'tiff', 'webp', 'mov'):
+            for i in range(15):
+                p = generate_profile(pack, OPTIONS, SEED, 'src-%s-%d' % (ext, i), ext)
+                fields = flatten_profile_fields(pack, p)
+                for k in fields:
+                    self.assertNotIn('source', k.lower(),
+                                     'profile generation must never emit Source (reserved for tripwire)')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

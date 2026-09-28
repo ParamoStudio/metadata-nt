@@ -5,11 +5,21 @@
 # application source, except the explicit allow-list:
 #   1. http://ipc.localhost        — Tauri IPC origin inside the CSP (tauri.conf.json)
 #   2. http://127.0.0.1:1420       — local Vite devUrl (tauri.conf.json, dev only)
-#   3. The three hard-coded external link constants in app/src-tauri/src/external.rs:
+#   3. The seven hard-coded external link constants in app/src-tauri/src/external.rs:
 #        https://github.com/jvoisin/mat2
 #        https://github.com/freedomofpress/dangerzone
 #        https://www.privacytools.io/
-#      (file created in Task 14; until then it does not exist and contributes nothing)
+#        https://canarytokens.org/                          (tripwire info dialog)
+#        https://docs.canarytokens.org/guide/fast-redirect-token.html
+#        https://github.com/thinkst/canarytokens
+#        https://resources.canary.tools/documents/Doyensec_ThinkstCanaryTokensOSS_Report_Q22024_WithRetesting.pdf
+#   4. The hard-coded Canarytokens API origin in app/src-tauri/src/tripwire.rs
+#      (the ONLY intentional network path; owner-approved add-on spec §16).
+#   5. `https://archive.org/` — the spec-mandated DEFAULT redirect destination
+#      value (tripwire spec §11); it is data sent to the canary service when
+#      the user enables the tripwire, never fetched by the app.
+#   6. Bare scheme literals `"https://"` used in redirect-validation code
+#      (scheme prefix checks, not URLs).
 #
 # Scope: app PRODUCTION sources only. docs/, scripts/, lockfiles and
 # node_modules are out of scope by design (documentation may cite URLs;
@@ -75,6 +85,14 @@ VIOLATIONS="$(grep -E '(https?|wss?)://' "${SCAN_LIST}" 2>/dev/null \
   | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://github\.com/jvoisin/mat2"' \
   | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://github\.com/freedomofpress/dangerzone"' \
   | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://www\.privacytools\.io/?"' \
+  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://canarytokens\.org/"' \
+  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://docs\.canarytokens\.org/guide/fast-redirect-token\.html"' \
+  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://github\.com/thinkst/canarytokens"' \
+  | grep -vE 'src-tauri/src/external\.rs:[0-9]+:.*https://resources\.canary\.tools/documents/Doyensec_ThinkstCanaryTokensOSS_Report_Q22024_WithRetesting\.pdf"' \
+  | grep -vE 'src-tauri/src/tripwire\.rs:[0-9]+:.*https://canarytokens\.org' \
+  | grep -vE 'https://archive\.org/' \
+  | grep -vE 'https://"' \
+  | grep -vE 'https:// ' \
   || true)"
 
 if [ -n "${VIOLATIONS}" ]; then

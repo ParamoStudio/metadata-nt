@@ -25,6 +25,7 @@ Direct dependencies and justification (plan Task 20 questions):
 | `sha2` 0.10 | MIT OR Apache-2.0 | Checksum invariants (source-unchanged, staging byte-identity, pack pin) | std has no hashing | none (pure Rust, RustCrypto) |
 | `time` 0.3 | MIT OR Apache-2.0 | Local `YYYY-MM-DD_HHmmss` output timestamps | hand-rolled civil calendar = bug surface | none (no network/parser) |
 | `libc` 0.2 (unix) | MIT OR Apache-2.0 | Process-group signalling (`kill(-pgid, …)`) for controlled cancellation of MAT2 children | std cannot signal groups | already an indirect dependency of the Rust std/tauri tree |
+| `ureq` 2.x (+ rustls, webpki) | MIT OR Apache-2.0 (rustls: MIT OR Apache-2.0 OR ISC) | Investigation Tripwire HTTPS client — blocking, rustls TLS, no async runtime, no cookies; hard-coded Canarytokens.org origin | std has no HTTP/TLS stack | Rust-side only; no HTTP IPC command; WebView keeps zero network capability; cargo-deny license allow-list validated |
 
 ## 2. npm packages (app/)
 

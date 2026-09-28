@@ -62,6 +62,8 @@ export interface FileJobResult {
   synthetic_state: SyntheticState;
   synthetic_fields: SyntheticField[];
   synthetic_note: string | null;
+  tripwire_state: TripwireState;
+  tripwire_note: string | null;
 }
 
 /** Synthetic add-on (owner-approved scope extension). */
@@ -84,7 +86,24 @@ export interface SyntheticOptions {
   locationMode: "off" | "city" | "gps";
   technicalMode: "synthetic" | "empty";
   serialMode: "empty" | "generate";
+  tripwire: TripwireOptions | null;
 }
+
+/** Investigation Tripwire (owner-approved add-on; Canarytokens.org Fast
+ * Redirect). The email is alert configuration for the service ONLY — the
+ * backend never writes it into files, logs or results. */
+export interface TripwireOptions {
+  enabled: boolean;
+  email: string;
+  redirectUrl: string;
+}
+
+export type TripwireState =
+  | "not_requested"
+  | "planted_verified"
+  | "failed_creation"
+  | "failed_kept_synthetic"
+  | "unavailable_format";
 
 export interface SyntheticPreview {
   archetype: string;
